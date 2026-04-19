@@ -1,0 +1,23 @@
+Section,Type,Item,Value,Unit,Monthly_USD_Economy,Monthly_USD_Balanced,Monthly_USD_HighQuality,Semester_USD_Economy,Semester_USD_Balanced,Semester_USD_HighQuality,Notes
+Assumptions,Input,Number of students,100,students,,,,,,,Semester cohort size
+Assumptions,Input,Semester length,16,weeks,,,,,,,Instructional weeks with active usage
+Assumptions,Input,Billing period used for semester estimate,4,months,,,,,,,Approximate cloud billing months
+Assumptions,Input,Avg chat turns per student per week,8,turns/week,,,,,,,Used for token estimate
+Assumptions,Input,Avg tokens per turn (input+output),1800,tokens/turn,,,,,,,Conversation context + response
+Assumptions,Derived,Estimated total semester tokens,23040000,tokens,,,,,,,100*8*16*1800
+AWS Core,Fixed,App hosting (ECS Fargate or Amplify),175,USD/month,60,60,60,240,240,240,Next.js runtime hosting
+AWS Core,Fixed,Load balancer/API/network baseline,25,USD/month,25,25,25,100,100,100,ALB/API/network baseline traffic
+AWS Core,Fixed,DynamoDB,20,USD/month,20,20,20,80,80,80,Structured event and template metadata
+AWS Core,Fixed,S3 storage,10,USD/month,10,10,10,40,40,40,Exports and files
+AWS Core,Fixed,CloudWatch logs/monitoring,20,USD/month,20,20,20,80,80,80,Logs, metrics, alerts
+AWS Core,Fixed,Cognito auth,5,USD/month,5,5,5,20,20,20,Auth for 100-student cohort
+AWS Core,Fixed,SQS + Lambda (async jobs),15,USD/month,15,15,15,60,60,60,Background analytics/queue tasks
+AWS Core,Fixed,Miscellaneous buffer,20,USD/month,20,20,20,80,80,80,Small operational variance
+LLM Variable,Variable,LLM usage cost (token-based),varies,USD/month,11.5,46,115.25,46,184,461,Model mix drives variance
+Subtotal,Computed,Semester subtotal (AWS core + LLM),computed,USD,,,,746,884,1161,Before contingency
+Risk Buffer,Computed,Contingency (20%),20,percent,,,,149.2,176.8,232.2,Recommended for usage spikes
+Total,Computed,Recommended semester total,computed,USD,,,,895.2,1060.8,1393.2,Subtotal + contingency
+Total,Computed,Rounded budget target,rounded,USD,,,,900,1100,1400,Planning-friendly rounded target
+Monthly View,Computed,Monthly average incl. contingency,computed,USD/month,223.8,265.2,348.3,,,,Useful for monthly tracking
+Notes,Method,Excludes image/video generation by default,Yes,flag,,,,,,,Text-first research deployment assumption
+Notes,Method,If image/video generation is enabled,Add separate line items,action,,,,,,,Can significantly increase total cost

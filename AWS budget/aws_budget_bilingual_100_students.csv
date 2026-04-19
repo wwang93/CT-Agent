@@ -1,0 +1,23 @@
+Section,Type,Item_EN,Item_ZH,Value,Unit,Monthly_USD_Economy,Monthly_USD_Balanced,Monthly_USD_HighQuality,Semester_USD_Economy,Semester_USD_Balanced,Semester_USD_HighQuality,Notes_EN,Notes_ZH
+Assumptions,Input,Number of students,学生人数,100,students,,,,,,,Semester cohort size,学期研究对象规模
+Assumptions,Input,Semester length,学期时长,16,weeks,,,,,,,Instructional weeks with active usage,有教学活动与对话使用的周数
+Assumptions,Input,Billing period used for semester estimate,学期预算按月计费周期,4,months,,,,,,,Approximate cloud billing months,云服务按4个月估算
+Assumptions,Input,Avg chat turns per student per week,每名学生每周平均对话轮次,8,turns/week,,,,,,,Used for token estimate,用于Token总量估算
+Assumptions,Input,Avg tokens per turn (input+output),每轮平均Token（输入+输出）,1800,tokens/turn,,,,,,,Conversation context + response,包含上下文和回复
+Assumptions,Derived,Estimated total semester tokens,学期总Token估算,23040000,tokens,,,,,,,100*8*16*1800,100*8*16*1800
+AWS Core,Fixed,App hosting (ECS Fargate or Amplify),应用托管（ECS Fargate或Amplify）,175,USD/month,60,60,60,240,240,240,Next.js runtime hosting,Next.js运行托管
+AWS Core,Fixed,Load balancer/API/network baseline,负载均衡/API/网络基础成本,25,USD/month,25,25,25,100,100,100,ALB/API/network baseline traffic,ALB/API和基础网络流量
+AWS Core,Fixed,DynamoDB,数据存储DynamoDB,20,USD/month,20,20,20,80,80,80,Structured event and template metadata,结构化事件与模板元数据
+AWS Core,Fixed,S3 storage,对象存储S3,10,USD/month,10,10,10,40,40,40,Exports and files,导出文件与对象存储
+AWS Core,Fixed,CloudWatch logs/monitoring,日志与监控CloudWatch,20,USD/month,20,20,20,80,80,80,Logs, metrics, alerts,日志、指标与告警
+AWS Core,Fixed,Cognito auth,认证Cognito,5,USD/month,5,5,5,20,20,20,Auth for 100-student cohort,100人规模认证成本
+AWS Core,Fixed,SQS + Lambda (async jobs),异步任务SQS+Lambda,15,USD/month,15,15,15,60,60,60,Background analytics/queue tasks,后台分析与队列任务
+AWS Core,Fixed,Miscellaneous buffer,其他基础波动项,20,USD/month,20,20,20,80,80,80,Small operational variance,小规模运营波动
+LLM Variable,Variable,LLM usage cost (token-based),LLM调用成本（按Token）,varies,USD/month,11.5,46,115.25,46,184,461,Model mix drives variance,模型档位与占比决定波动
+Subtotal,Computed,Semester subtotal (AWS core + LLM),学期小计（云基础+LLM）,computed,USD,,,,746,884,1161,Before contingency,不含风险缓冲
+Risk Buffer,Computed,Contingency (20%),风险缓冲（20%）,20,percent,,,,149.2,176.8,232.2,Recommended for usage spikes,建议应对调用波动
+Total,Computed,Recommended semester total,建议学期总预算,computed,USD,,,,895.2,1060.8,1393.2,Subtotal + contingency,小计+风险缓冲
+Total,Computed,Rounded budget target,建议预算目标（取整）,rounded,USD,,,,900,1100,1400,Planning-friendly rounded target,便于立项规划的取整目标
+Monthly View,Computed,Monthly average incl. contingency,含缓冲月均预算,computed,USD/month,223.8,265.2,348.3,,,,Useful for monthly tracking,用于按月跟踪
+Notes,Method,Excludes image/video generation by default,默认不含图像/视频生成成本,Yes,flag,,,,,,,Text-first research deployment assumption,按文本优先研究部署估算
+Notes,Method,If image/video generation is enabled,若启用图像/视频生成,Add separate line items,action,,,,,,,Can significantly increase total cost,会显著增加总成本
