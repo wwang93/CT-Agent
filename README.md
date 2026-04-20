@@ -68,6 +68,28 @@ Notes for Vercel demo mode:
 - Data is ephemeral and can reset on cold starts/redeploys
 - This is suitable for demo and pilot walkthroughs, not durable research storage
 
+## Enable durable storage with Supabase (recommended)
+
+If you want data persistence on Vercel (no reset on cold starts), connect Supabase:
+
+1. In Supabase SQL Editor, run: `supabase/schema.sql`
+2. In Vercel project settings, add environment variables:
+
+```bash
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+OPENAI_API_KEY=your_key
+OPENAI_MODEL=gpt-5-nano
+```
+
+3. Redeploy
+
+Storage mode behavior:
+
+- `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` set -> Supabase mode (durable)
+- Else on Vercel -> memory mode (ephemeral demo)
+- Else local dev -> file mode (`data/store.json`)
+
 ## Mock roles
 
 Use one of these links to enter each mode:
