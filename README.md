@@ -16,7 +16,9 @@ V1.3 adds week-aligned template publishing and structured logging fields for res
 - React 19
 - TypeScript
 - OpenAI SDK (optional; app has local fallback behavior)
-- Local JSON persistence in `data/store.json`
+- Storage modes:
+  - Local file mode (default local dev): `data/store.json`
+  - Vercel demo mode (automatic on Vercel): in-memory runtime store
 
 ## Run locally
 
@@ -46,6 +48,25 @@ npm run dev
 ```
 
 Open `http://localhost:3000`.
+
+## Deploy to Vercel (Demo)
+
+1. Push this repo to GitHub
+2. Import the repo in Vercel
+3. Add environment variables:
+
+```bash
+OPENAI_API_KEY=your_key
+OPENAI_MODEL=gpt-5-nano
+```
+
+4. Deploy
+
+Notes for Vercel demo mode:
+
+- On Vercel, storage automatically runs in memory mode (`VERCEL=1`)
+- Data is ephemeral and can reset on cold starts/redeploys
+- This is suitable for demo and pilot walkthroughs, not durable research storage
 
 ## Mock roles
 
@@ -99,23 +120,27 @@ The active scaffold is checked for:
 
 ## UI theme
 
-The V1.1 UI follows UT System primary colors from the official brand page:
+The UI follows UT System primary colors from the official brand page:
 
 - Tennessee Orange `#ff8200`
 - Smoky Mountain Gray `#4B4B4B`
 
-## Data model (V1)
+## Data model (V1.3)
 
-Events are appended to `data/store.json` as records with:
+Events are appended with structured fields, including:
 
 - event type
 - role
 - userId
 - courseId
+- weekNumber
+- assignmentId
+- sessionId
+- turnIndex
 - timestamp
 - payload
 
 ## Notes
 
-- This V1 is intentionally lightweight and suitable for pilot use.
-- It is not production hardened yet (no full auth provider, no consent workflow UI, no cloud persistence).
+- This version is intentionally lightweight and suitable for pilot/demo use.
+- It is not production hardened yet (no full auth provider, no consent workflow UI, no durable cloud persistence in Vercel demo mode).

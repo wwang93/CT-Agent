@@ -14,6 +14,11 @@ type StoreSchema = {
   courseTemplates: Record<string, CourseTemplateRecord>;
 };
 
+declare global {
+  // eslint-disable-next-line no-var
+  var __CT_AGENT_STORE__: StoreSchema | undefined;
+}
+
 const STORE_DIR = path.join(process.cwd(), "data");
 const STORE_FILE = path.join(STORE_DIR, "store.json");
 
@@ -24,6 +29,24 @@ const emptyStore: StoreSchema = {
   courseTemplates: {},
 };
 
+function cloneStore(data: StoreSchema): StoreSchema {
+  return {
+    events: [...data.events],
+    courseTemplates: { ...data.courseTemplates },
+  };
+}
+
+function isMemoryStoreMode() {
+  return process.env.VERCEL === "1" || process.env.STORE_MODE === "memory";
+}
+
+function getMemoryStore() {
+  if (!globalThis.__CT_AGENT_STORE__) {
+    globalThis.__CT_AGENT_STORE__ = cloneStore(emptyStore);
+  }
+  return globalThis.__CT_AGENT_STORE__;
+}
+
 function buildTemplateKey(input: {
   courseId: string;
   weekNumber: number;
@@ -33,6 +56,9 @@ function buildTemplateKey(input: {
 }
 
 async function ensureStore() {
+  if (isMemoryStoreMode()) {
+    return;
+  }
   if (!fs.existsSync(STORE_DIR)) {
     await fs.promises.mkdir(STORE_DIR, { recursive: true });
   }
@@ -42,6 +68,9 @@ async function ensureStore() {
 }
 
 async function readStore(): Promise<StoreSchema> {
+  if (isMemoryStoreMode()) {
+    return cloneStore(getMemoryStore());
+  }
   await ensureStore();
   const raw = await fs.promises.readFile(STORE_FILE, "utf-8");
   const parsed = JSON.parse(raw) as Partial<StoreSchema>;
@@ -55,6 +84,10 @@ async function readStore(): Promise<StoreSchema> {
 }
 
 async function writeStore(data: StoreSchema) {
+  if (isMemoryStoreMode()) {
+    globalThis.__CT_AGENT_STORE__ = cloneStore(data);
+    return;
+  }
   await fs.promises.writeFile(STORE_FILE, `${JSON.stringify(data, null, 2)}\n`);
 }
 
