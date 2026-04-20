@@ -2,14 +2,13 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 
-import { createClient } from "@supabase/supabase-js";
-
 import type {
   CourseTemplateRecord,
   EventRecord,
   TemplateScaffold,
   UserRole,
 } from "@/lib/types";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 
 type StoreSchema = {
   events: EventRecord[];
@@ -48,8 +47,6 @@ type CourseTemplateRow = {
 declare global {
   // eslint-disable-next-line no-var
   var __CT_AGENT_STORE__: StoreSchema | undefined;
-  // eslint-disable-next-line no-var
-  var __CT_AGENT_SUPABASE__: ReturnType<typeof createClient> | undefined;
 }
 
 const STORE_DIR = path.join(process.cwd(), "data");
@@ -90,25 +87,6 @@ function getMemoryStore() {
     globalThis.__CT_AGENT_STORE__ = cloneStore(emptyStore);
   }
   return globalThis.__CT_AGENT_STORE__;
-}
-
-function getSupabaseAdmin() {
-  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    throw new Error("Supabase is not configured.");
-  }
-  if (!globalThis.__CT_AGENT_SUPABASE__) {
-    globalThis.__CT_AGENT_SUPABASE__ = createClient(
-      process.env.SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_ROLE_KEY,
-      {
-        auth: {
-          autoRefreshToken: false,
-          persistSession: false,
-        },
-      },
-    );
-  }
-  return globalThis.__CT_AGENT_SUPABASE__;
 }
 
 async function ensureStore() {
@@ -222,7 +200,7 @@ export async function appendEvent(input: {
   };
 
   if (isSupabaseConfigured()) {
-    const client = getSupabaseAdmin() as any;
+    const client = getSupabaseAdminClient() as any;
     const { data, error } = await client
       .from("events")
       .insert({
@@ -265,7 +243,7 @@ export async function listEvents(filters?: {
   assignmentId?: string;
 }) {
   if (isSupabaseConfigured()) {
-    const client = getSupabaseAdmin() as any;
+    const client = getSupabaseAdminClient() as any;
     let query = client.from("events").select("*");
 
     if (filters?.role) query = query.eq("role", filters.role);
@@ -313,7 +291,7 @@ export async function saveCourseTemplates(input: {
 
   if (isSupabaseConfigured()) {
     return withWriteLock(async () => {
-      const client = getSupabaseAdmin() as any;
+      const client = getSupabaseAdminClient() as any;
       const { data: existing, error: existingError } = await client
         .from("course_templates")
         .select("template_version")
@@ -394,7 +372,7 @@ export async function getCourseTemplates(input: {
   assignmentId: string;
 }) {
   if (isSupabaseConfigured()) {
-    const client = getSupabaseAdmin() as any;
+    const client = getSupabaseAdminClient() as any;
     const { data, error } = await client
       .from("course_templates")
       .select("*")
@@ -437,7 +415,7 @@ export async function setCourseTemplateActiveIndex(input: {
         Math.min(input.activeTemplateIndex, existing.templates.length - 1),
       );
 
-      const client = getSupabaseAdmin() as any;
+      const client = getSupabaseAdminClient() as any;
       const { data, error } = await client
         .from("course_templates")
         .update({

@@ -3,9 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { evaluateTemplateQuality } from "@/lib/template-quality";
+import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import type { TemplateScaffold } from "@/lib/types";
-
-const DEMO_USER = "instructor-demo-001";
 
 type CourseRecord = {
   templates: string[];
@@ -30,6 +29,19 @@ export default function InstructorCopilot() {
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const getAuthHeaders = async () => {
+    const client = getSupabaseBrowserClient();
+    const { data } = await client.auth.getSession();
+    const token = data.session?.access_token;
+    if (!token) {
+      throw new Error("No active session.");
+    }
+    return {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    };
+  };
+
   const loadCourseTemplate = async () => {
     const trimmedCourse = courseId.trim();
     const trimmedAssignment = assignmentId.trim();
@@ -42,7 +54,9 @@ export default function InstructorCopilot() {
         weekNumber: String(parsedWeek),
         assignmentId: trimmedAssignment,
       });
-      const res = await fetch(`/api/templates?${query.toString()}`);
+      const res = await fetch(`/api/templates?${query.toString()}`, {
+        headers: await getAuthHeaders(),
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to load templates.");
       if (!data.record) {
@@ -74,9 +88,8 @@ export default function InstructorCopilot() {
     try {
       const res = await fetch("/api/templates", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await getAuthHeaders(),
         body: JSON.stringify({
-          userId: DEMO_USER,
           courseId,
           weekNumber: parsedWeek,
           assignmentId: assignmentId.trim(),
@@ -109,12 +122,11 @@ export default function InstructorCopilot() {
     try {
       const res = await fetch("/api/templates", {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: await getAuthHeaders(),
         body: JSON.stringify({
           courseId,
           weekNumber: parsedWeek,
           assignmentId: assignmentId.trim(),
-          userId: DEMO_USER,
           activeTemplateIndex: index,
         }),
       });

@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 
 import { generatePromptTemplates } from "@/lib/llm";
+import {
+  authErrorResponse,
+  ensureRole,
+  requireAuthenticatedUser,
+} from "@/lib/auth-server";
 import { scaffoldToText } from "@/lib/template-scaffold";
 import {
   appendEvent,
@@ -10,39 +15,48 @@ import {
 } from "@/lib/store";
 
 export async function GET(request: Request) {
-  const url = new URL(request.url);
-  const courseId = url.searchParams.get("courseId")?.trim();
-  const weekNumberRaw = url.searchParams.get("weekNumber");
-  const assignmentId = url.searchParams.get("assignmentId")?.trim();
-  const weekNumber = weekNumberRaw ? Number(weekNumberRaw) : NaN;
+  try {
+    const auth = await requireAuthenticatedUser(request);
+    ensureRole(auth.role, ["student", "instructor", "researcher"]);
 
-  if (!courseId || !assignmentId || !Number.isFinite(weekNumber)) {
-    return NextResponse.json(
-      { error: "courseId, weekNumber, and assignmentId are required." },
-      { status: 400 },
-    );
+    const url = new URL(request.url);
+    const courseId = url.searchParams.get("courseId")?.trim();
+    const weekNumberRaw = url.searchParams.get("weekNumber");
+    const assignmentId = url.searchParams.get("assignmentId")?.trim();
+    const weekNumber = weekNumberRaw ? Number(weekNumberRaw) : NaN;
+
+    if (!courseId || !assignmentId || !Number.isFinite(weekNumber)) {
+      return NextResponse.json(
+        { error: "courseId, weekNumber, and assignmentId are required." },
+        { status: 400 },
+      );
+    }
+
+    const record = await getCourseTemplates({
+      courseId,
+      weekNumber,
+      assignmentId,
+    });
+    if (!record) {
+      return NextResponse.json({ record: null });
+    }
+
+    return NextResponse.json({
+      record,
+      activeTemplate: record.templates[record.activeTemplateIndex] ?? "",
+      activeScaffold: record.scaffolds?.[record.activeTemplateIndex] ?? null,
+    });
+  } catch (error) {
+    return authErrorResponse(error);
   }
-
-  const record = await getCourseTemplates({
-    courseId,
-    weekNumber,
-    assignmentId,
-  });
-  if (!record) {
-    return NextResponse.json({ record: null });
-  }
-
-  return NextResponse.json({
-    record,
-    activeTemplate: record.templates[record.activeTemplateIndex] ?? "",
-    activeScaffold: record.scaffolds?.[record.activeTemplateIndex] ?? null,
-  });
 }
 
 export async function POST(request: Request) {
   try {
+    const auth = await requireAuthenticatedUser(request);
+    ensureRole(auth.role, ["instructor"]);
+
     const body = (await request.json()) as {
-      userId?: string;
       courseId?: string;
       weekNumber?: number;
       assignmentId?: string;
@@ -53,7 +67,6 @@ export async function POST(request: Request) {
     };
 
     if (
-      !body.userId ||
       !body.courseId ||
       typeof body.weekNumber !== "number" ||
       !body.assignmentId ||
@@ -83,14 +96,16 @@ export async function POST(request: Request) {
       courseGoal: body.courseGoal,
       assignmentType: body.assignmentType,
       culturalContext: body.culturalContext ?? "",
-      updatedBy: body.userId,
+      updatedBy: auth.userId,
     });
 
     await appendEvent({
       type: "template_generated",
       role: "instructor",
-      userId: body.userId,
+      userId: auth.userId,
       courseId: body.courseId,
+      weekNumber: body.weekNumber,
+      assignmentId: body.assignmentId,
       payload: {
         courseGoal: body.courseGoal,
         weekNumber: body.weekNumber,
@@ -111,18 +126,19 @@ export async function POST(request: Request) {
       activeScaffold: record.scaffolds?.[record.activeTemplateIndex] ?? null,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Template generation failed.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return authErrorResponse(error);
   }
 }
 
 export async function PATCH(request: Request) {
   try {
+    const auth = await requireAuthenticatedUser(request);
+    ensureRole(auth.role, ["instructor"]);
+
     const body = (await request.json()) as {
       courseId?: string;
       weekNumber?: number;
       assignmentId?: string;
-      userId?: string;
       activeTemplateIndex?: number;
     };
 
@@ -130,7 +146,6 @@ export async function PATCH(request: Request) {
       !body.courseId ||
       typeof body.weekNumber !== "number" ||
       !body.assignmentId ||
-      !body.userId ||
       typeof body.activeTemplateIndex !== "number"
     ) {
       return NextResponse.json({ error: "Missing required fields." }, { status: 400 });
@@ -141,7 +156,7 @@ export async function PATCH(request: Request) {
       weekNumber: body.weekNumber,
       assignmentId: body.assignmentId,
       activeTemplateIndex: body.activeTemplateIndex,
-      updatedBy: body.userId,
+      updatedBy: auth.userId,
     });
 
     if (!record) {
@@ -154,7 +169,7 @@ export async function PATCH(request: Request) {
     await appendEvent({
       type: "template_generated",
       role: "instructor",
-      userId: body.userId,
+      userId: auth.userId,
       courseId: body.courseId,
       weekNumber: body.weekNumber,
       assignmentId: body.assignmentId,
@@ -170,7 +185,6 @@ export async function PATCH(request: Request) {
       activeScaffold: record.scaffolds?.[record.activeTemplateIndex] ?? null,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to update active template.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return authErrorResponse(error);
   }
 }

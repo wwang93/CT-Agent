@@ -1,13 +1,16 @@
 import type { UserRole } from "@/lib/types";
 
-export const ROLE_QUERY_KEY = "mock_role";
-export const ROLE_STORAGE_KEY = "ct-agent-role";
-
 export function parseRole(value: string | null | undefined): UserRole | null {
   if (value === "student" || value === "instructor" || value === "researcher") {
     return value;
   }
   return null;
+}
+
+export function roleLandingPath(role: UserRole) {
+  if (role === "student") return "/student";
+  if (role === "instructor") return "/instructor";
+  return "/research";
 }
 
 export function getDefaultCourse(role: UserRole): string {

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import type { AnalyticsSummary } from "@/lib/types";
 
 const emptySummary: AnalyticsSummary = {
@@ -26,19 +27,40 @@ export default function ResearchAnalytics() {
   const [summary, setSummary] = useState<AnalyticsSummary>(emptySummary);
   const [sampleSize, setSampleSize] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const getAuthHeaders = async () => {
+    const client = getSupabaseBrowserClient();
+    const { data } = await client.auth.getSession();
+    const token = data.session?.access_token;
+    if (!token) {
+      throw new Error("No active session.");
+    }
+    return {
+      Authorization: `Bearer ${token}`,
+    };
+  };
 
   const load = async () => {
     setLoading(true);
+    setError(null);
     try {
       const query = new URLSearchParams({
         courseId,
         weekNumber,
         assignmentId,
       });
-      const res = await fetch(`/api/analytics?${query.toString()}`);
+      const res = await fetch(`/api/analytics?${query.toString()}`, {
+        headers: await getAuthHeaders(),
+      });
       const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error ?? "Failed to load analytics.");
+      }
       setSummary(data.summary ?? emptySummary);
       setSampleSize(data.sampleSize ?? 0);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load analytics.");
     } finally {
       setLoading(false);
     }
@@ -62,6 +84,7 @@ export default function ResearchAnalytics() {
           Filters: course, week, assignment
         </p>
         <p className="muted">Current sample size: {sampleSize} logged events</p>
+        {error ? <p style={{ color: "#b91c1c", marginBottom: 0 }}>{error}</p> : null}
       </section>
 
       <section className="grid grid-3">

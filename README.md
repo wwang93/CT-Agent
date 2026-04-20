@@ -1,47 +1,58 @@
-# CT-AGENT (V1.3)
+# CT-AGENT (V1.4)
 
-CT-AGENT is a V1.3 prototype for your GenAI + critical thinking study.
+CT-AGENT is a V1.4 prototype for GenAI-supported critical-thinking instruction.
 
-It includes three role-specific experiences:
+## What is new in V1.4
 
-- Student Coach: Socratic critical-thinking dialogue
-- Instructor Copilot: culturally tailored prompt template generator
-- Research Analytics: event-based metrics dashboard
+- Email sign-up/sign-in with Supabase Auth
+- Email verification callback flow
+- Forgot-password and reset-password flow
+- Role-based access gates (`student`, `instructor`, `researcher`)
+- Role-based routing after login
+- Real authenticated user IDs in logs (not mock IDs)
 
-V1.3 adds week-aligned template publishing and structured logging fields for research tracking (course, week, assignment, session, turn, template version).
+## Core experiences
+
+- Student Coach: Socratic dialogue with active scaffold injection
+- Instructor Copilot: generate/publish HOT scaffolds by course/week/assignment
+- Research Analytics: role-restricted analytics with week-level breakdown
 
 ## Tech stack
 
 - Next.js 16 (App Router)
 - React 19
 - TypeScript
-- OpenAI SDK (optional; app has local fallback behavior)
-- Storage modes:
-  - Local file mode (default local dev): `data/store.json`
-  - Vercel demo mode (automatic on Vercel): in-memory runtime store
+- OpenAI SDK
+- Supabase (Auth + Postgres persistence)
 
-## Run locally
+## Local run
 
-1. Install dependencies
+1. Install
 
 ```bash
 npm install
 ```
 
-2. Configure environment variables
+2. Configure env
 
 ```bash
 copy .env.example .env
 ```
 
-Optional, for real LLM responses:
+3. Fill required env vars
 
 ```bash
 OPENAI_API_KEY=your_key
 OPENAI_MODEL=gpt-5-nano
+
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+
+NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your_publishable_key
 ```
 
-3. Start dev server
+4. Run
 
 ```bash
 npm run dev
@@ -49,120 +60,50 @@ npm run dev
 
 Open `http://localhost:3000`.
 
-## Deploy to Vercel (Demo)
+## Supabase setup
 
-1. Push this repo to GitHub
-2. Import the repo in Vercel
-3. Add environment variables:
+Run schema migration in Supabase SQL Editor:
 
-```bash
-OPENAI_API_KEY=your_key
-OPENAI_MODEL=gpt-5-nano
-```
+- `supabase/schema.sql`
 
-4. Deploy
+This creates:
 
-Notes for Vercel demo mode:
+- `events`
+- `course_templates`
+- `profiles`
 
-- On Vercel, storage automatically runs in memory mode (`VERCEL=1`)
-- Data is ephemeral and can reset on cold starts/redeploys
-- This is suitable for demo and pilot walkthroughs, not durable research storage
+## Vercel deployment
 
-## Enable durable storage with Supabase (recommended)
+1. Push repository to GitHub
+2. Import project in Vercel
+3. Add the same env vars listed above
+4. Redeploy after env changes
 
-If you want data persistence on Vercel (no reset on cold starts), connect Supabase:
+## Auth routes
 
-1. In Supabase SQL Editor, run: `supabase/schema.sql`
-2. In Vercel project settings, add environment variables:
+- `/auth` sign-in/sign-up/forgot-password
+- `/auth/callback` email verification callback
+- `/auth/reset-password` set new password
 
-```bash
-SUPABASE_URL=https://your-project-ref.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
-OPENAI_API_KEY=your_key
-OPENAI_MODEL=gpt-5-nano
-```
+Role landing pages:
 
-3. Redeploy
+- `student` -> `/student`
+- `instructor` -> `/instructor`
+- `researcher` -> `/research`
 
-Storage mode behavior:
+## Logging model
 
-- `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` set -> Supabase mode (durable)
-- Else on Vercel -> memory mode (ephemeral demo)
-- Else local dev -> file mode (`data/store.json`)
-
-## Mock roles
-
-Use one of these links to enter each mode:
-
-- `http://localhost:3000/student?mock_role=student`
-- `http://localhost:3000/instructor?mock_role=instructor`
-- `http://localhost:3000/research?mock_role=researcher`
-
-## V1.3 architecture
-
-- `app/student`: student-facing Socratic chat UI + automatic template sync by week/assignment
-- `app/instructor`: scaffold-based prompt-generation UI + active template publishing by week/assignment + adequacy checker
-- `app/research`: analytics view with course/week/assignment filters
-- `app/api/chat`: coach reply generation + event logging
-- `app/api/templates`: scaffold generation + retrieval + active scaffold updates
-- `app/api/analytics`: aggregate metrics endpoint
-- `lib/store.ts`: local event store with write lock
-- `lib/analytics.ts`: metric calculations
-- `lib/template-scaffold.ts`: scaffold normalization and string rendering
-- `lib/template-quality.ts`: HOT adequacy checks
-
-## Instructor -> Student scaffold injection flow (week-aligned)
-
-1. Instructor generates 3 structured scaffolds for a specific course + week + assignment.
-2. First scaffold is auto-marked active for that week-assignment context.
-3. Instructor can switch active scaffold with `Set active for students`.
-4. Student page auto-syncs the active scaffold by `courseId + weekNumber + assignmentId` and injects it into chat context.
-5. Chat events log structured metadata including `weekNumber`, `assignmentId`, `sessionId`, `turnIndex`, and template version.
-
-## Structured log fields (V1.3)
-
-Each interaction event now supports:
+`events` include structured fields such as:
 
 - `courseId`
 - `weekNumber`
 - `assignmentId`
 - `sessionId`
 - `turnIndex`
-- `templateVersion` (in payload)
-
-## HOT adequacy checker (Instructor)
-
-The active scaffold is checked for:
-
-- Counterargument requirement
-- Bias/threat identification
-- Minimum evidence standard
-- Method limits/uncertainty reflection
-- Transfer/application question
-
-## UI theme
-
-The UI follows UT System primary colors from the official brand page:
-
-- Tennessee Orange `#ff8200`
-- Smoky Mountain Gray `#4B4B4B`
-
-## Data model (V1.3)
-
-Events are appended with structured fields, including:
-
-- event type
-- role
-- userId
-- courseId
-- weekNumber
-- assignmentId
-- sessionId
-- turnIndex
-- timestamp
-- payload
+- `templateVersion` in payload
+- authenticated Supabase `user_id`
 
 ## Notes
 
-- This version is intentionally lightweight and suitable for pilot/demo use.
-- It is not production hardened yet (no full auth provider, no consent workflow UI, no durable cloud persistence in Vercel demo mode).
+- V1.4 is suitable for pilot and controlled research deployments.
+- Production hardening (consent workflow, stricter policy controls, observability, audit exports) should be added for large-scale rollout.

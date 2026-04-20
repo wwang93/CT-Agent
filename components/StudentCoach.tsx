@@ -2,8 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { ChatMessage, TemplateScaffold } from "@/lib/types";
-
-const DEMO_USER = "student-demo-001";
+import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 
 export default function StudentCoach() {
   const [objective, setObjective] = useState("Evaluate methodological rigor in qualitative studies.");
@@ -28,6 +27,19 @@ export default function StudentCoach() {
 
   const turnCount = useMemo(() => messages.filter((m) => m.role === "user").length, [messages]);
 
+  const getAuthHeaders = async () => {
+    const client = getSupabaseBrowserClient();
+    const { data } = await client.auth.getSession();
+    const token = data.session?.access_token;
+    if (!token) {
+      throw new Error("No active session.");
+    }
+    return {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    };
+  };
+
   const syncTemplate = async () => {
     const trimmedCourse = courseId.trim();
     const trimmedAssignment = assignmentId.trim();
@@ -41,7 +53,8 @@ export default function StudentCoach() {
         weekNumber: String(parsedWeek),
         assignmentId: trimmedAssignment,
       });
-      const res = await fetch(`/api/templates?${query.toString()}`);
+      const headers = await getAuthHeaders();
+      const res = await fetch(`/api/templates?${query.toString()}`, { headers });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to load course template.");
 
@@ -91,10 +104,8 @@ export default function StudentCoach() {
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await getAuthHeaders(),
         body: JSON.stringify({
-          role: "student",
-          userId: DEMO_USER,
           courseId,
           weekNumber: parsedWeek,
           assignmentId: trimmedAssignment,

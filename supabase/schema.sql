@@ -35,3 +35,13 @@ create table if not exists public.course_templates (
   updated_by text not null,
   primary key (course_id, week_number, assignment_id)
 );
+
+create table if not exists public.profiles (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  role text not null check (role in ('student', 'instructor', 'researcher')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists profiles_role_idx
+  on public.profiles (role);

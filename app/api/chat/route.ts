@@ -2,14 +2,16 @@ import { NextResponse } from "next/server";
 
 import { appendEvent } from "@/lib/store";
 import { generateCoachReply } from "@/lib/llm";
-import { parseRole } from "@/lib/auth";
+import {
+  authErrorResponse,
+  ensureRole,
+  requireAuthenticatedUser,
+} from "@/lib/auth-server";
 import type { ChatMessage } from "@/lib/types";
 
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as {
-      role?: string;
-      userId?: string;
       courseId?: string;
       weekNumber?: number;
       assignmentId?: string;
@@ -23,11 +25,10 @@ export async function POST(request: Request) {
       injectedTemplateVersion?: number;
       conversation?: ChatMessage[];
     };
+    const auth = await requireAuthenticatedUser(request);
+    ensureRole(auth.role, ["student"]);
 
-    const role = parseRole(body.role ?? "");
     if (
-      !role ||
-      !body.userId ||
       !body.courseId ||
       typeof body.weekNumber !== "number" ||
       !body.assignmentId ||
@@ -46,8 +47,8 @@ export async function POST(request: Request) {
 
     await appendEvent({
       type: "chat_turn",
-      role,
-      userId: body.userId,
+      role: auth.role,
+      userId: auth.userId,
       courseId: body.courseId,
       weekNumber: body.weekNumber,
       assignmentId: body.assignmentId,
@@ -66,7 +67,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ reply });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to generate reply.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return authErrorResponse(error);
   }
 }
