@@ -1,16 +1,8 @@
-import NavBar from "@/components/NavBar";
-import RoleGate from "@/components/RoleGate";
-import StudentCoach from "@/components/StudentCoach";
+import { Suspense } from "react";
+import LearningWorkspace from "@/components/education/LearningWorkspace";
 
 export default function StudentPage() {
   return (
-    <main>
-      <NavBar title="Student Coach: evidence-focused Socratic dialogue" />
-      <div className="container" style={{ padding: "26px 0 36px" }}>
-        <RoleGate expected="student">
-          <StudentCoach />
-        </RoleGate>
-      </div>
-    </main>
+    <Suspense fallback={<p>正在读取学习记录…</p>}><LearningWorkspace /></Suspense>
   );
 }

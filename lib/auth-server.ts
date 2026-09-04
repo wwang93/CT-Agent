@@ -73,8 +73,8 @@ export async function requireAuthenticatedUser(request: Request) {
     throw new AuthError("Invalid or expired token.", 401);
   }
 
-  const metadataRole = parseRole(String(data.user.user_metadata?.role ?? "")) ?? "student";
-  const profile = await ensureProfile(data.user.id, metadataRole);
+  // User-editable signup metadata must never grant staff privileges.
+  const profile = await ensureProfile(data.user.id, "student");
 
   return {
     token,

@@ -5,3 +5,9 @@ node_modules/
 .vercel/
 npm-debug.log*
 data/store.json
+.open-next/
+.wrangler/
+dist/
+*.tsbuildinfo
+.env.*
+!.env.example

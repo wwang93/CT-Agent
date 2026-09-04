@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 
-import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
+import { getConfiguredSupabaseClient } from "@/lib/supabase-browser";
 
 export default function ResetPasswordPage() {
   const [password, setPassword] = useState("");
@@ -27,7 +27,7 @@ export default function ResetPasswordPage() {
     setMessage(null);
 
     try {
-      const client = getSupabaseBrowserClient();
+      const client = await getConfiguredSupabaseClient();
       const { error: updateError } = await client.auth.updateUser({
         password,
       });

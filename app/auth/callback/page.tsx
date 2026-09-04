@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { roleLandingPath } from "@/lib/auth";
-import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
+import { getConfiguredSupabaseClient } from "@/lib/supabase-browser";
 import type { UserRole } from "@/lib/types";
 
 export default function AuthCallbackPage() {
@@ -14,7 +14,7 @@ export default function AuthCallbackPage() {
   useEffect(() => {
     const run = async () => {
       try {
-        const client = getSupabaseBrowserClient();
+        const client = await getConfiguredSupabaseClient();
         const { data, error } = await client.auth.getSession();
         if (error) throw error;
         if (!data.session?.access_token) {
