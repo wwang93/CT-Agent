@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --conditions=react-server --test tests/*.test.ts",
+    "test": "node --import tsx --conditions=react-server --test tests/*.test.ts",
     "build:sites": "next build && opennextjs-cloudflare build --skipNextBuild && node scripts/build-sites.mjs"
   },
   "dependencies": {

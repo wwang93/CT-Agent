@@ -1,4 +1,4 @@
-import { STAGES, TASKS, type Stage, type Task } from "./course";
+import { ACTIVE_UNIT_IDS, STAGES, TASKS, type Stage, type Task } from "./course";
 import type { Entry, LearningSession } from "./types";
 
 export class EducationError extends Error {
@@ -13,7 +13,7 @@ export function actionId(value: unknown): string {
   return value;
 }
 export function unitId(value: unknown): number {
-  if (typeof value !== "number" || !Number.isInteger(value) || !TASKS[value]) throw new EducationError("第一版仅开放第 6、9 单元的完整任务。");
+  if (typeof value !== "number" || !Number.isInteger(value) || !ACTIVE_UNIT_IDS.includes(value)) throw new EducationError("本版仅开放干预 1（单元 6）与干预 2（单元 10）；后面三次待教师选定讲义。");
   return value;
 }
 export function nextStage(stage: Stage): LearningSession["stage"] {
@@ -60,9 +60,10 @@ export function validateTask(raw: unknown, expectedUnit: number): Task {
   };
 }
 export function sessionSummary(session: LearningSession) {
-  return { id: session.id, unitId: session.unitId, stage: session.stage, createdAt: session.createdAt, updatedAt: session.updatedAt,
+  return { id: session.id, unitId: session.unitId, interventionId: session.interventionId ?? session.task.interventionId, scheduledWeek: session.task.scheduledWeek,
+    provider: session.ai?.provider, model: session.ai?.model, stage: session.stage, createdAt: session.createdAt, updatedAt: session.updatedAt,
     hints: session.entries.filter((entry) => entry.kind === "hint").length,
-    chats: session.entries.filter((entry) => entry.kind === "chat").length, taskVersion: session.task.version };
+    chats: session.entries.filter((entry) => entry.kind === "chat").length, aiErrors: session.entries.filter((entry) => entry.kind === "ai_error").length, taskVersion: session.task.version };
 }
 export function redactText(text: string) {
   return text.replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[邮箱已遮盖]").replace(/(?<!\d)1[3-9]\d{9}(?!\d)/g, "[手机号已遮盖]");

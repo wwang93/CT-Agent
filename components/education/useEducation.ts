@@ -1,12 +1,12 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { getConfiguredSupabaseClient } from "@/lib/supabase-browser";
-import type { Consent, CourseSettings, PublishedTask, SessionSummary } from "@/lib/education/types";
+import type { AISelection, Consent, CourseSettings, PublishedTask, SessionSummary } from "@/lib/education/types";
 import type { UserRole } from "@/lib/types";
 export type Overview = {
   user: { id: string; role: UserRole; learnerCode: string }; member: boolean; configs: PublishedTask[];
   sessions: SessionSummary[]; settings: Omit<CourseSettings, "inviteHash"> & { inviteEnabled: boolean };
-  consent: Consent; aiEnabled: boolean; classroomEnabled: boolean; truncated: boolean;
+  consent: Consent; aiEnabled: boolean; ai: {provider: AISelection["provider"] | null; model: string | null; configured: boolean; configurationError: boolean}; aiAvailability: Record<AISelection["provider"], boolean>; classroomEnabled: boolean; truncated: boolean;
 };
 export async function educationApi<T = Record<string, unknown>>(query = "", body?: Record<string, unknown>): Promise<T> {
   const client = await getConfiguredSupabaseClient();

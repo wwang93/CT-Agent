@@ -1,9 +1,10 @@
 import "server-only";
 import crypto from "node:crypto";
-import { COURSE, TASKS, type Stage } from "./course";
+import { ACTIVE_UNIT_IDS, COURSE, INTERVENTIONS, getInterventionForUnit, type Stage } from "./course";
 import { actionId, applyAnswer, applyHint, assertOwner, assertUnlocked, EducationError, requiredText, sessionSummary, unitId, validateTask, redactText } from "./engine";
 import { readRecord, writeRecord, listRecords } from "./store";
-import { coachReply } from "./coach";
+import { coachReply, PROMPT_VERSION } from "./coach";
+import { aiConfigured, getAISelection, getAIStatus } from "./provider";
 import type { Consent, CourseSettings, LearningSession, PublishedTask } from "./types";
 import type { UserRole } from "@/lib/types";
 
@@ -26,10 +27,12 @@ export async function overview(auth: Auth) {
   ]);
   const { inviteHash, ...publicSettings } = settings;
   return { user: { id: auth.userId, role: auth.role, learnerCode: learnerCode(auth.userId) }, member: auth.role !== "student" || Boolean(member),
-    configs: configs.records.filter((item) => auth.role === "instructor" || item.published),
+    configs: configs.records.filter((item) => auth.role === "instructor" || (item.published && ACTIVE_UNIT_IDS.includes(item.task.unitId))),
     sessions: sessions.records.map(sessionSummary).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
     settings: { ...publicSettings, inviteEnabled: Boolean(inviteHash) }, consent: consent?.value ?? { enabled: false, noticeVersion: 0, updatedAt: "" },
-    aiEnabled: Boolean(process.env.OPENAI_API_KEY), classroomEnabled: process.env.EDU_CLASSROOM_ENABLED === "true", truncated: sessions.truncated,
+    aiEnabled: getAIStatus().configured, ai: getAIStatus(),
+    aiAvailability: { deepseek: Boolean(process.env.DEEPSEEK_API_KEY?.trim()), openai: Boolean(process.env.OPENAI_API_KEY?.trim()) },
+    classroomEnabled: process.env.EDU_CLASSROOM_ENABLED === "true", truncated: sessions.truncated,
   };
 }
 export async function loadSession(auth: Auth, id: string) {
@@ -87,7 +90,8 @@ export async function performAction(auth: Auth, body: Record<string, unknown>) {
       if (body.reviewed !== true) throw new EducationError("请先审核案例、提示、来源与完成标准。");
       if (!Number.isInteger(body.scheduledWeek) || Number(body.scheduledWeek) < 1 || Number(body.scheduledWeek) > 30) throw new EducationError("教学周须为 1—30 的整数，与课程单元编号分别设置。");
       const value: PublishedTask = { task: validateTask(body.task, unit), version: (record?.value.version ?? 0) + 1, published: body.published === true,
-        scheduledWeek: Number(body.scheduledWeek), teacherNotes: typeof body.teacherNotes === "string" ? body.teacherNotes.trim().slice(0, 2000) : "", reviewedAt: now, reviewedBy: auth.userId };
+        scheduledWeek: Number(body.scheduledWeek), interventionId: getInterventionForUnit(unit)!.id,
+        teacherNotes: typeof body.teacherNotes === "string" ? body.teacherNotes.trim().slice(0, 2000) : "", reviewedAt: now, reviewedBy: auth.userId };
       await writeRecord(key, value, auth.userId, record?.revision ?? 0);
       return { config: value };
     }
@@ -96,6 +100,7 @@ export async function performAction(auth: Auth, body: Record<string, unknown>) {
       const unit = unitId(body.unitId), requestId = actionId(body.requestId);
       const config = await readRecord<PublishedTask>(`config:${unit}`);
       if (!config?.value.published) throw new EducationError("教师尚未发布本单元任务。", 409);
+      if (config.value.interventionId !== getInterventionForUnit(unit)!.id) throw new EducationError("请教师审核并发布新的讲义干预版本；旧版记录保留，但不自动纳入本次干预。", 409);
       const own = await listRecords<LearningSession>("session:", auth.userId);
       const existing = own.records.find((item) => item.startRequestId === requestId && item.unitId === unit);
       if (existing) return { session: existing };
@@ -105,7 +110,9 @@ export async function performAction(auth: Auth, body: Record<string, unknown>) {
       if (same.length >= 3) throw new EducationError("本版本已有三次学习记录，请先回看记录或联系教师。");
       // Concurrent starts compete for the same attempt slot, not separate IDs.
       const id = digest(`${auth.userId}:${unit}:v${config.value.version}:attempt:${same.length}`).slice(0, 32);
-      const session: LearningSession = { id, startRequestId: requestId, ownerId: auth.userId, unitId: unit, task: config.value, stage: "initial", entries: [], language: requiredText(body.language ?? "英语", "所学语言", 30), createdAt: now, updatedAt: now };
+      const session: LearningSession = { id, startRequestId: requestId, ownerId: auth.userId, unitId: unit,
+        interventionId: config.value.interventionId, courseVersion: COURSE.version, ai: getAISelection(),
+        task: config.value, stage: "initial", entries: [], language: requiredText(body.language ?? "英语", "所学语言", 30), createdAt: now, updatedAt: now };
       try { await writeRecord(`session:${id}`, session, auth.userId, 0); }
       catch (error) {
         if (!(error instanceof EducationError) || error.status !== 409) throw error;
@@ -128,8 +135,10 @@ export async function performAction(auth: Auth, body: Record<string, unknown>) {
       assertUnlocked(session);
       if (session.stage !== "revision") throw new EducationError("个性化答疑仅在解释与修订阶段开放。", 409);
       if (session.entries.filter((entry) => entry.kind === "chat").length >= 8) throw new EducationError("本次学习已完成八轮答疑。请先整理并提交自己的解释，或向教师求助。");
+      if (session.entries.filter((entry) => entry.kind === "chat" || entry.kind === "ai_error").length >= 20) throw new EducationError("本次学习的 AI 请求已达上限，请使用教师提示或联系教师。", 429);
       const text = requiredText(body.text, "问题", 1000);
-      if (!process.env.OPENAI_API_KEY) throw new EducationError("个性化 AI 答疑尚未启用，请使用教师分层提示。", 503);
+      const selection = session.ai ?? getAISelection();
+      if (!aiConfigured(selection)) throw new EducationError(`${selection.provider === "deepseek" ? "DeepSeek 官方" : "OpenAI"}答疑尚未启用，请使用教师分层提示。`, 503);
       const locked = { ...session, pending: { id: requestId, startedAt: now } };
       await writeRecord(`session:${id}`, locked, auth.userId, record.revision);
       try {
@@ -138,7 +147,13 @@ export async function performAction(auth: Auth, body: Record<string, unknown>) {
         await writeRecord(`session:${id}`, updated, auth.userId, record.revision + 1);
         return { session: updated };
       } catch (error) {
-        await writeRecord(`session:${id}`, { ...session, pending: undefined }, auth.userId, record.revision + 1).catch(() => undefined);
+        const failed: LearningSession = { ...session, pending: undefined, updatedAt: new Date().toISOString(), entries: [...session.entries,
+          { id: crypto.randomUUID(), requestId, kind: "ai_error", stage: "revision", text,
+            provider: selection.provider, model: selection.model, thinking: selection.thinking, promptVersion: PROMPT_VERSION,
+            errorCode: error instanceof EducationError ? `application_${error.status}` : "provider_unavailable", createdAt: now }] };
+        // Error events and lock release use the same compare-and-swap as answers.
+        // Use a separate event ID so retrying a failed request cannot look successful.
+        await writeRecord(`session:${id}`, failed, auth.userId, record.revision + 1);
         if (error instanceof EducationError) throw error;
         throw new EducationError("AI 服务暂时不可用。你的学习记录没有丢失，可以使用分层提示或稍后重试。", 502);
       }
@@ -173,13 +188,21 @@ export async function analytics(auth: Auth, forResearch: boolean, includeRecords
   const rows = sessions.map((session) => ({ ...sessionSummary(session), learnerCode: learnerCode(session.ownerId) }));
   return { rows, total: rows.length, learners: new Set(sessions.map((item) => item.ownerId)).size, completed: rows.filter((item) => item.stage === "complete").length,
     hints: rows.reduce((sum, row) => sum + row.hints, 0), chats: rows.reduce((sum, row) => sum + row.chats, 0),
+    aiErrors: rows.reduce((sum, row) => sum + row.aiErrors, 0),
     members: forResearch ? undefined : members.records.length, researchEnabled: settings.researchEnabled, protocol: settings.researchProtocol,
     truncated: all.truncated || members.truncated, generatedAt: new Date().toISOString(),
-    units: Object.keys(TASKS).map(Number).map((id) => ({ unitId: id, started: rows.filter((row) => row.unitId === id).length, completed: rows.filter((row) => row.unitId === id && row.stage === "complete").length })),
+    units: [...new Set([...ACTIVE_UNIT_IDS, ...rows.map((row) => row.unitId)])].map((id) => ({ unitId: id, started: rows.filter((row) => row.unitId === id).length, completed: rows.filter((row) => row.unitId === id && row.stage === "complete").length })),
+    interventions: INTERVENTIONS.map((item) => ({ id: item.id, title: item.title, ready: item.ready,
+      started: rows.filter((row) => row.interventionId === item.id).length,
+      completed: rows.filter((row) => row.interventionId === item.id && row.stage === "complete").length })),
     ...(forResearch && includeRecords ? { records: sessions.map((session) => ({
-      learnerCode: learnerCode(session.ownerId), sessionId: session.id, unitId: session.unitId, taskVersion: session.task.version,
-      prompts: session.task.task.prompts, language: redactText(session.language), stage: session.stage,
-      entries: session.entries.map(({id, kind, stage, text, reply, createdAt, level, model, promptVersion, tokens}) => ({id,kind,stage,text:redactText(text),reply:reply ? redactText(reply) : undefined,createdAt,level,model,promptVersion,tokens})),
+      learnerCode: learnerCode(session.ownerId), sessionId: session.id, unitId: session.unitId,
+      interventionId: session.interventionId ?? session.task.interventionId, scheduledWeek: session.task.scheduledWeek,
+      courseVersion: session.courseVersion, taskVersion: session.task.version, ai: session.ai,
+      taskSnapshot: JSON.parse(redactText(JSON.stringify(session.task.task))), prompts: JSON.parse(redactText(JSON.stringify(session.task.task.prompts))),
+      language: redactText(session.language), stage: session.stage, createdAt: session.createdAt, updatedAt: session.updatedAt,
+      entries: session.entries.map(({id, kind, stage, text, reply, createdAt, level, model, provider, servedModel, thinking, promptVersion, tokens, inputTokens, outputTokens, latencyMs, requestId, errorCode}) =>
+        ({id,kind,stage,text:redactText(text),reply:reply ? redactText(reply) : undefined,createdAt,level,model,provider,servedModel,thinking,promptVersion,tokens,inputTokens,outputTokens,latencyMs,requestId,errorCode})),
     })), exportNotice: "仅含导出时仍同意当前告知版本的学生。假名化并非匿名化；自动遮蔽邮箱和部分电话不保证去除个人信息，分享前必须人工审查。" } : {}),
   };
 }
