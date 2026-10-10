@@ -66,13 +66,13 @@ async function ensureProfile(userId: string, fallbackRole: UserRole) {
 export async function requireAuthenticatedUser(request: Request) {
   const token = extractBearerToken(request);
   if (!token) {
-    throw new AuthError("Missing bearer token.", 401);
+    throw new AuthError("请先登录课程账号。", 401);
   }
 
   const client = getSupabaseAdminClient() as any;
   const { data, error } = await client.auth.getUser(token);
   if (error || !data?.user) {
-    throw new AuthError("Invalid or expired token.", 401);
+    throw new AuthError("登录已失效，请重新登录。", 401);
   }
 
   let learningIdentity: Awaited<ReturnType<typeof assertLearningSession>>;
@@ -94,7 +94,7 @@ export async function requireAuthenticatedUser(request: Request) {
 
 export function ensureRole(actualRole: UserRole, allowed: UserRole[]) {
   if (!allowed.includes(actualRole)) {
-    throw new AuthError("Insufficient role permissions.", 403);
+    throw new AuthError("当前账号无权执行此操作。", 403);
   }
 }
 

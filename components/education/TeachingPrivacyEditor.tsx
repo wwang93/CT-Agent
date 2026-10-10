@@ -14,7 +14,7 @@ export default function TeachingPrivacyEditor({ current, onSaved }: { current?: 
   }
   return <section className="edu-panel"><h2>开课前的教学记录说明</h2>
     <p>说明草稿已准备，但不会代你确认。填写实际联系渠道、保存期限和到期处理安排，核实学校的数据使用要求后保存。这里的期限只是你告知的处理安排，系统不会自动删除；请按安排执行，不要承诺尚未具备的自动清理。</p>
-    <label htmlFor="teaching-notice">教学用途、访问范围、模型与基础设施说明<textarea id="teaching-notice" rows={7} maxLength={4000} value={notice} onChange={(e) => { setNotice(e.target.value); setReviewed(false); }} disabled={busy} /></label>
+    <label htmlFor="teaching-notice">教学用途、访问范围、答疑与数据处理说明<textarea id="teaching-notice" rows={7} maxLength={4000} value={notice} onChange={(e) => { setNotice(e.target.value); setReviewed(false); }} disabled={busy} /></label>
     <label htmlFor="teaching-contact">学生联系渠道<input id="teaching-contact" maxLength={200} value={contact} onChange={(e) => { setContact(e.target.value); setReviewed(false); }} placeholder="填写课程教师的实际联系渠道" disabled={busy} /></label>
     <label htmlFor="teaching-retention">保存期限及到期处理安排<textarea id="teaching-retention" rows={3} maxLength={1000} value={retention} onChange={(e) => { setRetention(e.target.value); setReviewed(false); }} placeholder="明确期限、责任人和处理方式；不填写学生个人资料" disabled={busy} /></label>
     <label className="edu-check"><input type="checkbox" checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} disabled={busy} />我已核实说明、学校数据使用要求与实际保存安排，并确认联系渠道有效。</label>

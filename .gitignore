@@ -13,3 +13,4 @@ dist/
 !.env.example
 .DS_Store
 teacher-access.local.txt
+outputs/education-roster-20261010/

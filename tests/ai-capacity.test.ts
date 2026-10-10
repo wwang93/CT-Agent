@@ -59,7 +59,7 @@ test("daily quota resets in China time; expired owners cannot release a newer re
   // The newer request started after midnight, so it belongs to the next day's quota.
   assert.equal((await aiCapacityStatus(now + 90_001)).usedToday, 1);
   const second = await acquireAIPermit("second-today", now + 90_003); await releaseAIPermit(second);
-  await assert.rejects(() => acquireAIPermit("quota-exhausted", now + 90_004), /今日 AI 请求额度/);
+  await assert.rejects(() => acquireAIPermit("quota-exhausted", now + 90_004), /今日答疑次数/);
   assert.equal((await aiCapacityStatus(now + 90_004)).usedToday, 2);
 });
 test("invalid limits fail closed, rather than silently disabling capacity controls", (t) => {

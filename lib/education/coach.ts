@@ -5,7 +5,7 @@ import { getAISelection, requestCompletion } from "./provider";
 import type { LearningSession } from "./types";
 export const PROMPT_VERSION = "edu-socratic-2.0";
 export function coachMessages(session: LearningSession, question: string): ChatCompletionMessageParam[] {
-  if (session.stage !== "revision") throw new EducationError("AI 脚手架仅在解释与修订阶段开放。", 409);
+  if (session.stage !== "revision") throw new EducationError("学习答疑仅在解释与修订阶段开放。", 409);
   const task = session.task.task;
   // Do not include future independent tasks in the model context.
   const material = { title: task.title, caseText: task.caseText, objective: task.objective,

@@ -29,14 +29,14 @@ export function buildCompletionRequest(selection: AISelection, messages: ChatCom
     : { ...common, max_completion_tokens: 1800, store: false };
 }
 export async function requestCompletion(selection: AISelection, messages: ChatCompletionMessageParam[], fetcher?: typeof fetch) {
-  if (!aiConfigured(selection)) throw new EducationError(`${selection.provider === "deepseek" ? "DeepSeek 官方" : "OpenAI"}答疑尚未启用，请使用教师分层提示。`, 503);
+  if (!aiConfigured(selection)) throw new EducationError("学习答疑尚未启用，请使用教师分层提示。", 503);
   const key = selection.provider === "deepseek" ? process.env.DEEPSEEK_API_KEY : process.env.OPENAI_API_KEY;
   const client = new OpenAI({ apiKey: key, baseURL: PROVIDER_URLS[selection.provider], timeout: 30_000, maxRetries: 0, ...(fetcher ? { fetch: fetcher } : {}) });
   const started = Date.now();
   const request: ChatCompletionCreateParamsNonStreaming = buildCompletionRequest(selection, messages);
   const completion = await client.chat.completions.create(request);
   const reply = completion.choices[0]?.message?.content?.trim();
-  if (!reply || completion.choices[0]?.finish_reason === "length") throw new EducationError("模型未返回完整可用内容，请使用分层提示或稍后重试。", 502);
+  if (!reply || completion.choices[0]?.finish_reason === "length") throw new EducationError("未能获得完整答疑，请使用分层提示或稍后重试。", 502);
   // Only persist the visible reply, never reasoning_content or credentials.
   return { reply, provider: selection.provider, model: selection.model, servedModel: completion.model, thinking: selection.thinking,
     tokens: completion.usage?.total_tokens ?? 0, inputTokens: completion.usage?.prompt_tokens ?? 0, outputTokens: completion.usage?.completion_tokens ?? 0,

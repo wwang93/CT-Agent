@@ -170,10 +170,10 @@ export async function performAction(auth: Auth, body: Record<string, unknown>) {
       assertUnlocked(session);
       if (session.stage !== "revision") throw new EducationError("个性化答疑仅在解释与修订阶段开放。", 409);
       if (session.entries.filter((entry) => entry.kind === "chat").length >= 8) throw new EducationError("本次学习已完成八轮答疑。请先整理并提交自己的解释，或向教师求助。");
-      if (session.entries.filter((entry) => entry.kind === "chat" || entry.kind === "ai_error").length >= 20) throw new EducationError("本次学习的 AI 请求已达上限，请使用教师提示或联系教师。", 429);
+      if (session.entries.filter((entry) => entry.kind === "chat" || entry.kind === "ai_error").length >= 20) throw new EducationError("本次学习的答疑请求已达上限，请使用教师提示或联系教师。", 429);
       const text = requiredText(body.text, "问题", 1000);
       const selection = session.ai ?? getAISelection();
-      if (!aiConfigured(selection)) throw new EducationError(`${selection.provider === "deepseek" ? "DeepSeek 官方" : "OpenAI"}答疑尚未启用，请使用教师分层提示。`, 503);
+      if (!aiConfigured(selection)) throw new EducationError("学习答疑尚未启用，请使用教师分层提示。", 503);
       const permit = await acquireAIPermit(auth.userId);
       try {
       const locked = { ...session, pending: { id: requestId, startedAt: now } };
@@ -192,7 +192,7 @@ export async function performAction(auth: Auth, body: Record<string, unknown>) {
         // Use a separate event ID so retrying a failed request cannot look successful.
         await writeRecord(`session:${id}`, failed, auth.userId, record.revision + 1);
         if (error instanceof EducationError) throw error;
-        throw new EducationError("AI 服务暂时不可用。你的学习记录没有丢失，可以使用分层提示或稍后重试。", 502);
+        throw new EducationError("学习答疑暂时不可用。你的学习记录没有丢失，可以使用分层提示或稍后重试。", 502);
       }
       } finally { await releaseAIPermit(permit); }
     }

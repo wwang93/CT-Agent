@@ -12,7 +12,7 @@ export class AICapacityError extends EducationError {
 function boundedSetting(name: string, fallback: number, max: number) {
   const raw = process.env[name];
   if (!raw) return fallback;
-  if (!/^\d+$/.test(raw) || Number(raw) < 1 || Number(raw) > max) throw new EducationError(`${name} 配置无效，请联系管理员。`, 503);
+  if (!/^\d+$/.test(raw) || Number(raw) < 1 || Number(raw) > max) throw new EducationError("学习答疑设置异常，请联系课程教师。", 503);
   return Number(raw);
 }
 export function aiCapacityLimits() {
@@ -27,7 +27,7 @@ async function consumeBudget(owner: string, now: number, max: number) {
     const used = previous?.value.day === day ? previous.value.used : 0;
     if (used >= max) {
       const nextDay = Date.parse(`${day}T00:00:00+08:00`) + 86400_000;
-      throw new AICapacityError("本班今日 AI 请求额度已用完。你的问题仍保留，可使用教师提示或联系教师。", Math.max(1, Math.ceil((nextDay - now) / 1000)));
+      throw new AICapacityError("本班今日答疑次数已用完。你的问题仍保留，可使用教师提示或联系教师。", Math.max(1, Math.ceil((nextDay - now) / 1000)));
     }
     try { await writeRecord("ai-budget:current", { day, used: used + 1 }, owner, previous?.revision ?? 0); return; }
     catch (error) {
@@ -35,7 +35,7 @@ async function consumeBudget(owner: string, now: number, max: number) {
       await new Promise((resolve) => setTimeout(resolve, Math.min(5 + attempt * 2, 40)));
     }
   }
-  throw new AICapacityError("课堂请求较多，请稍后再试。你的问题尚未发送给模型。", 15);
+  throw new AICapacityError("课堂请求较多，请稍后再试。你的问题尚未发送。", 15);
 }
 export async function acquireAIPermit(owner: string, now = Date.now()): Promise<AIPermit> {
   const limits = aiCapacityLimits(), start = crypto.randomInt(limits.concurrent);
@@ -51,7 +51,7 @@ export async function acquireAIPermit(owner: string, now = Date.now()): Promise<
     try { await consumeBudget(owner, now, limits.dailyRequests); return permit; }
     catch (error) { await releaseAIPermit(permit); throw error; }
   }
-  throw new AICapacityError("课堂 AI 正在处理其他同学的问题。请 15 秒后重试；问题保留，尚未发送给模型，也不占本次答疑轮数。", 15);
+  throw new AICapacityError("学习答疑正在处理其他同学的问题。请 15 秒后重试；问题保留，尚未发送，也不占本次答疑轮数。", 15);
 }
 export async function releaseAIPermit(permit: AIPermit) {
   try {
