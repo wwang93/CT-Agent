@@ -6,6 +6,7 @@ import type { Analytics, LearningSession } from "@/lib/education/types";
 import CourseHeader from "./CourseHeader";
 import AccessNotice from "./AccessNotice";
 import { educationApi, useEducation } from "./useEducation";
+import LearningIdManager from "./LearningIdManager";
 
 export default function TeacherWorkspace() {
   const { data, loading, error: accessError, refresh } = useEducation();
@@ -24,7 +25,8 @@ export default function TeacherWorkspace() {
     {!data.classroomEnabled && <div className="edu-callout">课堂数据采集尚未开放：管理员需完成独立数据库、角色权限、隐私告知与运行配置，才能接收正式学生。</div>}
     <section className="edu-panel"><h2>模型与干预计划</h2><p>新会话：{data.ai.provider === "deepseek" ? "DeepSeek 官方 API" : data.ai.provider === "openai" ? "OpenAI" : "配置错误"} / {data.ai.model || "—"} · {data.aiEnabled ? "密钥已配置（仍需实际联调）" : "密钥尚未配置，教师固定提示可用"}。</p><p className="edu-caption">模型选择在开始会话时保存，不自动回退。要切换供应商须由管理员显式配置，并记录研究方案偏离。现有记录保留原任务和模型信息。</p><div className="edu-tags">{INTERVENTIONS.map((item) => <span key={item.id}>干预 {item.id} · {item.ready ? `Week ${item.week}` : "讲义待选"}</span>)}</div></section>
     <section className="edu-metrics">{[["已加入课程",stats?.members],["学习记录",stats?.total],["完成四阶段",stats?.completed],["AI 答疑轮次",stats?.chats]].map(([label,value]) => <div key={label}><span>{label}</span><strong>{value ?? "—"}</strong></div>)}</section>
-    <section className="edu-panel"><div className="edu-panel-title"><h2>课堂入口</h2><button className="edu-button secondary" disabled={busy} onClick={() => run(async () => { const result = await educationApi<{code:string}>("",{action:"invite"}); setInvite(result.code); setMessage("邀请码已生成。更新后旧码失效，已经加入的学生不受影响。"); await refresh(); })}>{data.settings.inviteEnabled ? "更新课程邀请码" : "生成课程邀请码"}</button></div><p>学生登录后输入邀请码加入课程。研究参与另行选择，不能作为加入条件。</p>{invite && <p className="edu-invite">本次邀请码：<strong>{invite}</strong><small>只在本次操作后显示，请通过课程渠道发放。</small></p>}</section>
+    <LearningIdManager />
+    <section className="edu-panel"><div className="edu-panel-title"><h2>已有邮箱学生的入课方式</h2><button className="edu-button secondary" disabled={busy} onClick={() => run(async () => { const result = await educationApi<{code:string}>("",{action:"invite"}); setInvite(result.code); setMessage("邀请码已生成。更新后旧码失效，已经加入的学生不受影响。"); await refresh(); })}>{data.settings.inviteEnabled ? "更新课程邀请码" : "生成课程邀请码"}</button></div><p>仅已有邮箱学生需要邀请码。教师发放的学习 ID 已登记课程成员，不需要再次入课。研究参与另行选择，不能作为加入条件。</p>{invite && <p className="edu-invite">本次邀请码：<strong>{invite}</strong><small>只在本次操作后显示，请通过课程渠道发放。</small></p>}</section>
     <section className="edu-panel"><div className="edu-panel-title"><h2>课程任务与脚手架</h2><span className="edu-caption">干预 1 / Week 7 · 干预 2 / Week 10 · 后三次待选讲义</span></div><div className="edu-tabs" role="group" aria-label="选择编辑单元">{ACTIVE_UNIT_IDS.map((id) => <button key={id} className={unit === id ? "active" : ""} onClick={() => setUnit(id)} disabled={busy}>干预 {getInterventionForUnit(id)!.id} · {UNITS[id-1].title}</button>)}</div>
       <p className="edu-caption">当前：{current ? `v${current.version} · ${current.published ? "已发布" : "草稿"}` : "未发布样板"}。新版本不会改写学生已经开始的任务快照。旧版记录不自动算作本轮干预。修改前请保存当前任务。</p>
       <button className="edu-button secondary" disabled={busy} onClick={() => {setDraft(structuredClone(TASKS[unit]));setWeek(getInterventionForUnit(unit)!.week!);setReviewed(false);}}>载入本次讲义样板（替换编辑区，尚不发布）</button>

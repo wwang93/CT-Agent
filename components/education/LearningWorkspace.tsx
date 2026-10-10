@@ -53,6 +53,7 @@ export default function LearningWorkspace({ preview = false }: { preview?: boole
   return <div className="edu-app"><CourseHeader active="student" />{preview && <div className="edu-preview-banner"><strong>样板预览</strong> · 教师编写的固定脚手架，不调用 AI、不保存输入、不产生研究数据。<Link href="/student">进入正式学习 →</Link></div>}
     {!preview && (!data || mismatch) ? <AccessNotice loading={loading} error={accessError} mismatch={mismatch ? "此页面供学生使用；教师可从工作台预览同样的学习流程。" : ""} onRetry={refresh} /> : !session ? <main className="edu-page"><div className="edu-page-heading"><div><div className="edu-eyebrow">我的学习 / {COURSE.id}</div><h1>把自己的理解留下来</h1><p>先选择一个已发布的任务，或继续之前的学习。</p></div><Link className="edu-button secondary" href="/">回到五次干预</Link></div>
       {!data?.member && <section className="edu-panel"><h2>加入教育心理学课程</h2><p>使用教师发放的邀请码加入。注册账号不代表已经加入课程。</p><label htmlFor="join-code">课程邀请码</label><div className="edu-inline-form"><input id="join-code" value={code} onChange={(e) => setCode(e.target.value)} maxLength={40} autoComplete="off" /><button className="edu-button" disabled={busy || !code.trim()} onClick={() => action({action:"join",code})}>加入课程</button></div></section>}
+      <p className="edu-caption">当前学习 ID：{data?.user.learnerCode}。五次干预与聊天记录均归于这个身份；如 ID 不属于你，请到课程登录页退出并切换。</p>
       {!data?.classroomEnabled && <div className="edu-callout">正式课堂尚未开放。你可以预览前两次任务，教师完成运行配置并审核发布后再开始保存学习记录。</div>}
       <section className="edu-two-col">{INTERVENTIONS.map((item) => {
         const id = item.unitId;

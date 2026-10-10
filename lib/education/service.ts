@@ -7,6 +7,7 @@ import { coachReply, PROMPT_VERSION } from "./coach";
 import { aiConfigured, getAISelection, getAIStatus } from "./provider";
 import type { Consent, CourseSettings, LearningSession, PublishedTask } from "./types";
 import type { UserRole } from "@/lib/types";
+import { issueLearningAccount, resetLearningAccessCode, verifiedLearningId } from "./learning-accounts";
 
 type Auth = { userId: string; role: UserRole };
 const defaults: CourseSettings = { researchEnabled: false, researchProtocol: "", consentNotice: "", noticeVersion: 0, updatedAt: "" };
@@ -26,7 +27,8 @@ export async function overview(auth: Auth) {
     auth.role === "student" ? readRecord(`member:${auth.userId}`) : Promise.resolve(null), readRecord<Consent>(`consent:${auth.userId}`),
   ]);
   const { inviteHash, ...publicSettings } = settings;
-  return { user: { id: auth.userId, role: auth.role, learnerCode: learnerCode(auth.userId) }, member: auth.role !== "student" || Boolean(member),
+  const learningId = await verifiedLearningId(auth.userId);
+  return { user: { id: auth.userId, role: auth.role, learnerCode: learningId ?? learnerCode(auth.userId) }, member: auth.role !== "student" || Boolean(member),
     configs: configs.records.filter((item) => auth.role === "instructor" || (item.published && ACTIVE_UNIT_IDS.includes(item.task.unitId))),
     sessions: sessions.records.map(sessionSummary).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
     settings: { ...publicSettings, inviteEnabled: Boolean(inviteHash) }, consent: consent?.value ?? { enabled: false, noticeVersion: 0, updatedAt: "" },
@@ -45,6 +47,8 @@ export async function loadSession(auth: Auth, id: string) {
 export async function performAction(auth: Auth, body: Record<string, unknown>) {
   const now = new Date().toISOString();
   switch (body.action) {
+    case "issueLearningId": return issueLearningAccount(auth, body);
+    case "resetLearningCode": return resetLearningAccessCode(auth, body);
     case "join": {
       requireRole(auth, ["student"]);
       if (process.env.EDU_CLASSROOM_ENABLED !== "true") throw new EducationError("正式课堂尚未开放，请先使用样板预览。", 503);
@@ -185,7 +189,15 @@ export async function analytics(auth: Auth, forResearch: boolean, includeRecords
     }
   }
   const sessions = all.records.filter((session) => !forResearch || authorized.has(session.ownerId));
-  const rows = sessions.map((session) => ({ ...sessionSummary(session), learnerCode: learnerCode(session.ownerId) }));
+  const learningIds = new Map<string, string>();
+  if (!forResearch) {
+    const owners = [...new Set(sessions.map((item) => item.ownerId))];
+    for (let start = 0; start < owners.length; start += 20) {
+      await Promise.all(owners.slice(start, start + 20).map(async (owner) => { const id = await verifiedLearningId(owner); if (id) learningIds.set(owner, id); }));
+    }
+  }
+  // Research retains the original pseudonym rather than the distributed roster ID.
+  const rows = sessions.map((session) => ({ ...sessionSummary(session), learnerCode: learningIds.get(session.ownerId) ?? learnerCode(session.ownerId) }));
   return { rows, total: rows.length, learners: new Set(sessions.map((item) => item.ownerId)).size, completed: rows.filter((item) => item.stage === "complete").length,
     hints: rows.reduce((sum, row) => sum + row.hints, 0), chats: rows.reduce((sum, row) => sum + row.chats, 0),
     aiErrors: rows.reduce((sum, row) => sum + row.aiErrors, 0),

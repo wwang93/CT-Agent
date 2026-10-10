@@ -11,3 +11,5 @@ dist/
 *.tsbuildinfo
 .env.*
 !.env.example
+.DS_Store
+teacher-access.local.txt

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { authErrorResponse, requireAuthenticatedUser } from "@/lib/auth-server";
+export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
   try {
@@ -12,7 +13,7 @@ export async function GET(request: Request) {
         email: auth.email,
         role: auth.role,
       },
-    });
+    }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     return authErrorResponse(error);
   }

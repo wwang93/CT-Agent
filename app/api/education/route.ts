@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { AuthError, requireAuthenticatedUser } from "@/lib/auth-server";
 import { EducationError } from "@/lib/education/engine";
 import { analytics, loadSession, overview, performAction } from "@/lib/education/service";
+import { listLearningAccounts } from "@/lib/education/learning-accounts";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { "Cache-Control": "private, no-store" } });
@@ -12,6 +13,7 @@ function failure(error: unknown) {
 export async function GET(request: Request) {
   try {
     const auth = await requireAuthenticatedUser(request), url = new URL(request.url);
+    if (url.searchParams.get("view") === "learningIds") return json(await listLearningAccounts(auth));
     if (url.searchParams.has("session")) return json({ session: (await loadSession(auth, url.searchParams.get("session")!)).value });
     if (url.searchParams.get("view") === "teaching") return json(await analytics(auth, false));
     if (url.searchParams.get("view") === "research") return json(await analytics(auth, true, url.searchParams.get("export") === "1"));

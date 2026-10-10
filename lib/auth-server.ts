@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import { parseRole } from "@/lib/auth";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import type { UserRole } from "@/lib/types";
+import { assertLearningSession } from "@/lib/education/learning-accounts";
+import { EducationError } from "@/lib/education/engine";
 
 export class AuthError extends Error {
   status: number;
@@ -73,8 +75,13 @@ export async function requireAuthenticatedUser(request: Request) {
     throw new AuthError("Invalid or expired token.", 401);
   }
 
+  let learningIdentity: Awaited<ReturnType<typeof assertLearningSession>>;
+  try { learningIdentity = await assertLearningSession(data.user.id, data.user.app_metadata ?? {}, token); }
+  catch (error) { if (error instanceof EducationError) throw new AuthError(error.message, error.status); throw error; }
+
   // User-editable signup metadata must never grant staff privileges.
   const profile = await ensureProfile(data.user.id, "student");
+  if (learningIdentity && profile.role !== learningIdentity.role) throw new AuthError("ID 权限与预设身份不一致，操作已停止。", 403);
 
   return {
     token,
