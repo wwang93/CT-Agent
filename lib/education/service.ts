@@ -8,6 +8,7 @@ import { aiConfigured, getAISelection, getAIStatus } from "./provider";
 import type { Consent, CourseSettings, LearningSession, PublishedTask } from "./types";
 import type { UserRole } from "@/lib/types";
 import { issueLearningAccount, resetLearningAccessCode, verifiedLearningId } from "./learning-accounts";
+import { acquireAIPermit, aiCapacityStatus, releaseAIPermit } from "./ai-capacity";
 
 type Auth = { userId: string; role: UserRole };
 const defaults: CourseSettings = { researchEnabled: false, researchProtocol: "", consentNotice: "", noticeVersion: 0, updatedAt: "" };
@@ -18,13 +19,20 @@ async function requireMember(auth: Auth, allowClosed = false) {
   requireRole(auth, ["student"]);
   if (!allowClosed && process.env.EDU_CLASSROOM_ENABLED !== "true") throw new EducationError("正式课堂尚未开放。请等待教师完成数据库权限与隐私配置，目前可使用样板预览。", 503);
   if (!await readRecord(`member:${auth.userId}`)) throw new EducationError("请先使用教师提供的课程邀请码加入课程。", 403);
+  if (!allowClosed) {
+    const settings = await getSettings();
+    if (!settings.teachingPrivacy?.reviewedAt) throw new EducationError("教师尚未确认教学记录说明与联系、保存安排，正式学习暂不可开始。", 409);
+    const ack = await readRecord<{ version: number }>(`teaching-ack:${auth.userId}`);
+    if (ack?.value.version !== settings.teachingPrivacy.version) throw new EducationError("请先在我的学习首页阅读并确认最新教学记录说明；这不是研究参与同意。", 409);
+  }
 }
 export async function getSettings() { return (await readRecord<CourseSettings>("settings"))?.value ?? defaults; }
 export async function overview(auth: Auth) {
-  const [settings, configs, sessions, member, consent] = await Promise.all([
+  const [settings, configs, sessions, member, consent, teachingAck] = await Promise.all([
     getSettings(), listRecords<PublishedTask>("config:"),
     auth.role === "student" ? listRecords<LearningSession>("session:", auth.userId) : Promise.resolve({ records: [] as LearningSession[], truncated: false }),
     auth.role === "student" ? readRecord(`member:${auth.userId}`) : Promise.resolve(null), readRecord<Consent>(`consent:${auth.userId}`),
+    auth.role === "student" ? readRecord<{ version: number; acknowledgedAt: string }>(`teaching-ack:${auth.userId}`) : Promise.resolve(null),
   ]);
   const { inviteHash, ...publicSettings } = settings;
   const learningId = await verifiedLearningId(auth.userId);
@@ -35,6 +43,8 @@ export async function overview(auth: Auth) {
     aiEnabled: getAIStatus().configured, ai: getAIStatus(),
     aiAvailability: { deepseek: Boolean(process.env.DEEPSEEK_API_KEY?.trim()), openai: Boolean(process.env.OPENAI_API_KEY?.trim()) },
     classroomEnabled: process.env.EDU_CLASSROOM_ENABLED === "true", truncated: sessions.truncated,
+    teachingAcknowledgement: teachingAck?.value ?? null,
+    ...(auth.role === "instructor" ? { aiCapacity: await aiCapacityStatus() } : {}),
   };
 }
 export async function loadSession(auth: Auth, id: string) {
@@ -49,6 +59,26 @@ export async function performAction(auth: Auth, body: Record<string, unknown>) {
   switch (body.action) {
     case "issueLearningId": return issueLearningAccount(auth, body);
     case "resetLearningCode": return resetLearningAccessCode(auth, body);
+    case "teachingPrivacy": {
+      requireRole(auth, ["instructor"]);
+      if (body.reviewed !== true) throw new EducationError("请教师确认教学记录说明、保存安排和联系渠道。");
+      const notice = requiredText(body.notice, "教学记录说明", 4000), contact = requiredText(body.contact, "联系渠道", 200), retention = requiredText(body.retention, "保存期限及到期处理安排", 1000);
+      if (/待填写|TODO|请填写|\[填写/i.test(`${notice} ${contact} ${retention}`)) throw new EducationError("请填写实际联系渠道与保存安排，不要保留占位内容。");
+      const record = await readRecord<CourseSettings>("settings");
+      const previous = record?.value.teachingPrivacy;
+      const changed = !previous || previous.notice !== notice || previous.contact !== contact || previous.retention !== retention;
+      const teachingPrivacy = { notice, contact, retention, version: (previous?.version ?? 0) + (changed ? 1 : 0), reviewedAt: now };
+      await writeRecord("settings", { ...(record?.value ?? defaults), teachingPrivacy, updatedAt: now }, auth.userId, record?.revision ?? 0);
+      return { saved: true };
+    }
+    case "acknowledgeTeachingNotice": {
+      await requireMember(auth, true);
+      const privacy = (await getSettings()).teachingPrivacy;
+      if (!privacy || body.version !== privacy.version || body.acknowledged !== true) throw new EducationError("说明尚未发布或版本已变化，请重新阅读。", 409);
+      const key = `teaching-ack:${auth.userId}`, record = await readRecord(key);
+      await writeRecord(key, { version: privacy.version, acknowledgedAt: now }, auth.userId, record?.revision ?? 0);
+      return { saved: true };
+    }
     case "join": {
       requireRole(auth, ["student"]);
       if (process.env.EDU_CLASSROOM_ENABLED !== "true") throw new EducationError("正式课堂尚未开放，请先使用样板预览。", 503);
@@ -86,16 +116,17 @@ export async function performAction(auth: Auth, body: Record<string, unknown>) {
       await writeRecord(key, { enabled: body.enabled === true, noticeVersion: settings.noticeVersion, updatedAt: now }, auth.userId, previous?.revision ?? 0);
       return { saved: true };
     }
-    case "publish": {
+    case "saveDraft": case "publish": {
       requireRole(auth, ["instructor"]);
       const unit = unitId(body.unitId), key = `config:${unit}`;
       const record = await readRecord<PublishedTask>(key);
       if (body.expectedVersion !== (record?.value.version ?? 0)) throw new EducationError("任务已被更新，请重新加载后编辑。", 409);
-      if (body.reviewed !== true) throw new EducationError("请先审核案例、提示、来源与完成标准。");
+      const reviewed = body.action === "publish" && body.reviewed === true;
+      if (body.action === "publish" && !reviewed) throw new EducationError("请先审核案例、提示、来源与完成标准。");
       if (!Number.isInteger(body.scheduledWeek) || Number(body.scheduledWeek) < 1 || Number(body.scheduledWeek) > 30) throw new EducationError("教学周须为 1—30 的整数，与课程单元编号分别设置。");
-      const value: PublishedTask = { task: validateTask(body.task, unit), version: (record?.value.version ?? 0) + 1, published: body.published === true,
+      const value: PublishedTask = { task: validateTask(body.task, unit), version: (record?.value.version ?? 0) + 1, published: reviewed && body.published === true,
         scheduledWeek: Number(body.scheduledWeek), interventionId: getInterventionForUnit(unit)!.id,
-        teacherNotes: typeof body.teacherNotes === "string" ? body.teacherNotes.trim().slice(0, 2000) : "", reviewedAt: now, reviewedBy: auth.userId };
+        teacherNotes: typeof body.teacherNotes === "string" ? body.teacherNotes.trim().slice(0, 2000) : "", reviewedAt: reviewed ? now : "", reviewedBy: reviewed ? auth.userId : "" };
       await writeRecord(key, value, auth.userId, record?.revision ?? 0);
       return { config: value };
     }
@@ -143,6 +174,8 @@ export async function performAction(auth: Auth, body: Record<string, unknown>) {
       const text = requiredText(body.text, "问题", 1000);
       const selection = session.ai ?? getAISelection();
       if (!aiConfigured(selection)) throw new EducationError(`${selection.provider === "deepseek" ? "DeepSeek 官方" : "OpenAI"}答疑尚未启用，请使用教师分层提示。`, 503);
+      const permit = await acquireAIPermit(auth.userId);
+      try {
       const locked = { ...session, pending: { id: requestId, startedAt: now } };
       await writeRecord(`session:${id}`, locked, auth.userId, record.revision);
       try {
@@ -161,6 +194,7 @@ export async function performAction(auth: Auth, body: Record<string, unknown>) {
         if (error instanceof EducationError) throw error;
         throw new EducationError("AI 服务暂时不可用。你的学习记录没有丢失，可以使用分层提示或稍后重试。", 502);
       }
+      } finally { await releaseAIPermit(permit); }
     }
     case "feedback": {
       requireRole(auth, ["instructor"]);

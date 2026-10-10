@@ -3,10 +3,12 @@ import { AuthError, requireAuthenticatedUser } from "@/lib/auth-server";
 import { EducationError } from "@/lib/education/engine";
 import { analytics, loadSession, overview, performAction } from "@/lib/education/service";
 import { listLearningAccounts } from "@/lib/education/learning-accounts";
+import { AICapacityError } from "@/lib/education/ai-capacity";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { "Cache-Control": "private, no-store" } });
 function failure(error: unknown) {
+  if (error instanceof AICapacityError) return NextResponse.json({ error: error.message }, { status: 429, headers: { "Cache-Control": "private, no-store", "Retry-After": String(error.retryAfter) } });
   if (error instanceof EducationError || error instanceof AuthError) return json({ error: error.message }, error.status);
   return json({ error: "课程服务暂时不可用，请稍后重试。" }, 503);
 }

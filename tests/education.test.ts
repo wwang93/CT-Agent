@@ -7,6 +7,7 @@ import type { LearningSession } from "../lib/education/types";
 import { analytics, loadSession, overview, performAction } from "../lib/education/service";
 import { readRecord, writeRecord } from "../lib/education/store";
 import { requireAuthenticatedUser } from "../lib/auth-server";
+import { acquireAIPermit, releaseAIPermit, AICapacityError } from "../lib/education/ai-capacity";
 
 const now = "2026-09-04T12:00:00.000Z";
 const fresh = (): LearningSession => ({id:"sample",ownerId:"student-a",unitId:6,task:{task:structuredClone(TASKS[6]),version:1,published:true,scheduledWeek:6,teacherNotes:"",reviewedAt:now,reviewedBy:"teacher"},stage:"initial",entries:[],language:"英语",createdAt:now,updatedAt:now});
@@ -76,11 +77,12 @@ function fakeDatabase() {
 test("server workflow enforces roles, snapshots, consent, AI auditing and optimistic concurrency", async (t) => {
   const fake=fakeDatabase();
   const originalFetch=globalThis.fetch;
-  const keys=["SUPABASE_URL","SUPABASE_SERVICE_ROLE_KEY","EDU_CLASSROOM_ENABLED","DEEPSEEK_API_KEY","OPENAI_API_KEY","EDU_AI_PROVIDER","DEEPSEEK_MODEL"];
+  const keys=["SUPABASE_URL","SUPABASE_SERVICE_ROLE_KEY","EDU_CLASSROOM_ENABLED","DEEPSEEK_API_KEY","OPENAI_API_KEY","EDU_AI_PROVIDER","DEEPSEEK_MODEL","EDU_AI_MAX_CONCURRENT","EDU_AI_DAILY_REQUEST_LIMIT"];
   const originalEnv=Object.fromEntries(keys.map((key)=>[key,process.env[key]]));
   t.after(()=>{globalThis.fetch=originalFetch;for(const key of keys) {if(originalEnv[key]===undefined)delete process.env[key];else process.env[key]=originalEnv[key];} delete (globalThis as any).__CT_AGENT_SUPABASE_SERVER__;});
   process.env.SUPABASE_URL="https://test.invalid";process.env.SUPABASE_SERVICE_ROLE_KEY="test-only";process.env.EDU_CLASSROOM_ENABLED="true";
   process.env.EDU_AI_PROVIDER="deepseek";delete process.env.DEEPSEEK_API_KEY;delete process.env.OPENAI_API_KEY;delete process.env.DEEPSEEK_MODEL;
+  delete process.env.EDU_AI_MAX_CONCURRENT;delete process.env.EDU_AI_DAILY_REQUEST_LIMIT;
   (globalThis as any).__CT_AGENT_SUPABASE_SERVER__=fake;
   const teacher={userId:"teacher",role:"instructor" as const},student={userId:"student-a",role:"student" as const},other={userId:"student-b",role:"student" as const},researcher={userId:"research",role:"researcher" as const};
   await assert.rejects(()=>requireAuthenticatedUser(new Request("http://localhost/api/education")));
@@ -91,6 +93,15 @@ test("server workflow enforces roles, snapshots, consent, AI auditing and optimi
   const invite=await performAction(teacher,{action:"invite"}) as {code:string};
   await assert.rejects(()=>performAction(student,{action:"join",code:"bad-code"}));
   await performAction(student,{action:"join",code:invite.code});
+  await assert.rejects(()=>performAction(student,{action:"start",unitId:6,requestId:crypto.randomUUID()}),/教师尚未确认/);
+  const privacy={action:"teachingPrivacy",notice:"测试课程教学记录说明，不作为研究参与同意。",contact:"测试教师，课堂内联系",retention:"测试结束即清理，不涉及真实学生",reviewed:true};
+  await assert.rejects(()=>performAction(student,privacy));
+  await assert.rejects(()=>performAction(teacher,{...privacy,reviewed:false}));
+  await assert.rejects(()=>performAction(teacher,{...privacy,contact:"待填写"}));
+  await performAction(teacher,privacy);
+  await assert.rejects(()=>performAction(student,{action:"start",unitId:6,requestId:crypto.randomUUID()}),/阅读并确认/);
+  await assert.rejects(()=>performAction(student,{action:"acknowledgeTeachingNotice",version:0,acknowledged:true}));
+  await performAction(student,{action:"acknowledgeTeachingNotice",version:1,acknowledged:true});
   const publish={action:"publish",unitId:6,expectedVersion:0,scheduledWeek:4,reviewed:true,published:true,task:TASKS[6]};
   await assert.rejects(()=>performAction(student,publish));await performAction(teacher,publish);
   await assert.rejects(()=>performAction(teacher,publish),/任务已被更新/);
@@ -126,6 +137,12 @@ test("server workflow enforces roles, snapshots, consent, AI auditing and optimi
       const failed=(await loadSession(student,id)).value;
       assert.equal(failed.pending,undefined);assert.equal(failed.entries.at(-1)?.kind,"ai_error");assert.equal(failed.entries.at(-1)?.requestId,retry.requestId);
       fail=false;await performAction(student,retry);assert.equal(requests,3,"failed requests can retry without silent provider fallback");
+      process.env.EDU_AI_MAX_CONCURRENT="1";
+      const permit=await acquireAIPermit("capacity-fixture"), before=(await loadSession(student,id)).value;
+      await assert.rejects(()=>performAction(student,{...chat,requestId:crypto.randomUUID()}),AICapacityError);
+      assert.equal(requests,3,"capacity rejection does not call the model");
+      assert.deepEqual((await loadSession(student,id)).value,before,"capacity rejection does not add an error/chat round or session lock");
+      await releaseAIPermit(permit);delete process.env.EDU_AI_MAX_CONCURRENT;
       globalThis.fetch=originalFetch;delete process.env.DEEPSEEK_API_KEY;delete process.env.OPENAI_API_KEY;process.env.EDU_AI_PROVIDER="deepseek";
     }
     if(stage.id==="revision") await assert.rejects(()=>performAction(student,{action:"chat",sessionId:id,text:"帮我回答迁移题",requestId:crypto.randomUUID()}),/仅在解释与修订/);
@@ -150,9 +167,19 @@ test("server workflow enforces roles, snapshots, consent, AI auditing and optimi
   await assert.rejects(()=>performAction(other,{action:"join",code:invite.code}),/尚未开放/);
   process.env.EDU_CLASSROOM_ENABLED="true";
   await performAction(other,{action:"join",code:invite.code});
+  await performAction(other,{action:"acknowledgeTeachingNotice",version:1,acknowledged:true});
   const simultaneous=await Promise.all(Array.from({length:10},()=>performAction(other,{action:"start",unitId:6,requestId:crypto.randomUUID(),language:"英语"}))) as {session:LearningSession}[];
   assert.equal(new Set(simultaneous.map((item)=>item.session.id)).size,1,"concurrent starts cannot create extra attempt slots");
   const record=await readRecord("settings");assert.ok(record);
   const results=await Promise.allSettled([writeRecord("settings",record.value,"teacher",record.revision),writeRecord("settings",record.value,"teacher",record.revision)]);
   assert.equal(results.filter((r)=>r.status==="fulfilled").length,1,"only one simultaneous revision can commit");
+  await performAction(teacher,{action:"saveDraft",unitId:10,expectedVersion:0,scheduledWeek:10,reviewed:true,published:true,task:TASKS[10]});
+  const draft=(await overview(teacher)).configs.find((item)=>item.task.unitId===10)!;
+  assert.equal(draft.published,false);assert.equal(draft.reviewedAt,"");assert.equal(draft.reviewedBy,"");
+  await assert.rejects(()=>performAction(other,{action:"start",unitId:10,requestId:crypto.randomUUID()}),/尚未发布/);
+  await performAction(teacher,{...privacy,retention:"更新后的测试保存安排"});
+  await assert.rejects(()=>performAction(other,{action:"answer",sessionId:simultaneous[0].session.id,stage:"initial",text:"旧版本确认不能写入",requestId:crypto.randomUUID()}),/阅读并确认/);
+  assert.equal((await loadSession(other,simultaneous[0].session.id)).value.stage,"initial","reading own history remains possible after a notice update");
+  await performAction(other,{action:"acknowledgeTeachingNotice",version:2,acknowledged:true});
+  assert.equal((await overview(other)).teachingAcknowledgement?.version,2);
 });

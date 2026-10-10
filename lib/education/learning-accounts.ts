@@ -9,6 +9,9 @@ import { listRecords, readRecord, writeRecord } from "./store";
 import { generateAccessCode, learningAuthEmail, normalizeLearningId, validateAccessCode, type LearningAccount } from "./learning-identity";
 
 type Auth = { userId: string; role: UserRole };
+export class LearningLoginCapacityError extends EducationError {
+  constructor(message: string, public retryAfter: number) { super(message, 429); }
+}
 const accountKey = (id: string) => `learning-account:${id}`;
 function instructor(auth: Auth) {
   if (auth.role !== "instructor") throw new EducationError("只有教师可以管理学习 ID。", 403);
@@ -127,11 +130,11 @@ async function consumeLimit(key: string, max: number, now: number) {
   for (let attempt = 0; attempt < 16; attempt++) {
     const previous = await readRecord<Limit>(key);
     const count = previous?.value.window === window ? previous.value.count : 0;
-    if (count >= max) throw new EducationError("尝试过于频繁，请等待五分钟或向教师确认访问码。", 429);
+    if (count >= max) throw new LearningLoginCapacityError("尝试过于频繁，请等待倒计时结束或向教师确认访问码。", Math.max(1, Math.ceil(((window + 1) * 300_000 - now) / 1000)));
     try { await writeRecord(key, { window, count: count + 1 }, "learning-login-rate-limit", previous?.revision ?? 0); return; }
     catch (error) { if (!(error instanceof EducationError) || error.status !== 409) throw error; }
   }
-  throw new EducationError("登录请求较多，请稍后再试。", 429);
+  throw new LearningLoginCapacityError("登录请求较多，请稍后再试。", 15);
 }
 export async function consumeLearningLoginLimit(id: string, now = Date.now(), knownId = true) {
   // No client-supplied IP header is trusted; caps are durable across Worker isolates.
@@ -152,7 +155,7 @@ export async function signInLearningAccount(body: Record<string, unknown>) {
   // Never sign in on the global service-role client: it would replace its auth context.
   const client = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } });
   const { data, error } = await client.auth.signInWithPassword({ email: learningAuthEmail(id), password: code });
-  if (error?.status === 429) throw new EducationError("登录服务请求较多，请稍后重试；不要连续点击。", 429);
+  if (error?.status === 429) throw new LearningLoginCapacityError("登录服务请求较多，输入仍保留。请等待倒计时结束再登录，不要连续点击。", 30);
   if (error && (error.status ?? 0) >= 500) throw new EducationError("登录服务暂时不可用，请稍后重试。", 503);
   if (error || !data.session || !data.user) throw new EducationError("学习 ID 或访问码不正确，请向教师确认。", 401);
   const record = await readRecord<LearningAccount>(accountKey(id));

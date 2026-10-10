@@ -30,7 +30,7 @@ async function ensureProfile(userId: string, fallbackRole: UserRole) {
     .maybeSingle();
 
   if (existingError) {
-    throw new AuthError(`Failed to load profile: ${existingError.message}`, 500);
+    throw new AuthError("无法核验账号权限，请稍后重试。", 503);
   }
 
   if (existing?.role) {
@@ -53,7 +53,7 @@ async function ensureProfile(userId: string, fallbackRole: UserRole) {
     .single();
 
   if (createError) {
-    throw new AuthError(`Failed to create profile: ${createError.message}`, 500);
+    throw new AuthError("无法完成账号权限登记，请联系教师。", 503);
   }
 
   const role = parseRole(created?.role) ?? fallbackRole;
@@ -100,8 +100,7 @@ export function ensureRole(actualRole: UserRole, allowed: UserRole[]) {
 
 export function authErrorResponse(error: unknown) {
   if (error instanceof AuthError) {
-    return NextResponse.json({ error: error.message }, { status: error.status });
+    return NextResponse.json({ error: error.message }, { status: error.status, headers: { "Cache-Control": "private, no-store" } });
   }
-  const message = error instanceof Error ? error.message : "Unauthorized.";
-  return NextResponse.json({ error: message }, { status: 500 });
+  return NextResponse.json({ error: "身份验证暂时不可用，请稍后重试。" }, { status: 503, headers: { "Cache-Control": "private, no-store" } });
 }

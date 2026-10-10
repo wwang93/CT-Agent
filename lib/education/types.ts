@@ -11,7 +11,8 @@ export type LearningSession = {
   courseVersion?: string;
   ai?: AISelection;
 };
-export type CourseSettings = { inviteHash?: string; researchEnabled: boolean; researchProtocol: string; consentNotice: string; noticeVersion: number; updatedAt: string };
+export type TeachingPrivacy = { notice: string; contact: string; retention: string; version: number; reviewedAt: string };
+export type CourseSettings = { inviteHash?: string; researchEnabled: boolean; researchProtocol: string; consentNotice: string; noticeVersion: number; updatedAt: string; teachingPrivacy?: TeachingPrivacy };
 export type Consent = { enabled: boolean; noticeVersion: number; updatedAt: string };
 export type Stored<T> = { value: T; revision: number };
 export type SessionSummary = { id: string; unitId: number; interventionId?: number; scheduledWeek: number; stage: LearningSession["stage"]; createdAt: string; updatedAt: string; hints: number; chats: number; aiErrors: number; learnerCode?: string; taskVersion: number; provider?: AISelection["provider"]; model?: string };

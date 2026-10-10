@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { EducationError } from "@/lib/education/engine";
-import { signInLearningAccount } from "@/lib/education/learning-accounts";
+import { LearningLoginCapacityError, signInLearningAccount } from "@/lib/education/learning-accounts";
 export const dynamic = "force-dynamic";
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { "Cache-Control": "private, no-store", "Pragma": "no-cache" } });
 export async function POST(request: Request) {
@@ -19,6 +19,7 @@ export async function POST(request: Request) {
     if (!body || typeof body !== "object" || Array.isArray(body)) return json({ error: "请求格式无效。" }, 400);
     return json(await signInLearningAccount(body));
   } catch (error) {
+    if (error instanceof LearningLoginCapacityError) return NextResponse.json({ error: error.message }, { status: 429, headers: { "Cache-Control": "private, no-store", "Pragma": "no-cache", "Retry-After": String(error.retryAfter) } });
     return json({ error: error instanceof EducationError ? error.message : "课程登录暂时不可用，请稍后重试。" }, error instanceof EducationError ? error.status : 503);
   }
 }

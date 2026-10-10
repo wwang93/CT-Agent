@@ -16,6 +16,14 @@ export default function AuthPage() {
   const [signedIn, setSignedIn] = useState(false), [landing, setLanding] = useState("/student");
   const [busy, setBusy] = useState(false), [message, setMessage] = useState(""), [error, setError] = useState("");
   const [identity, setIdentity] = useState("");
+  const [loginWaitUntil, setLoginWaitUntil] = useState(0), [clockTick, setClockTick] = useState(0);
+  const loginWait = Math.max(0, Math.ceil((loginWaitUntil - clockTick) / 1000));
+  useEffect(() => {
+    if (!loginWaitUntil) return;
+    setClockTick(Date.now());
+    const timer = setInterval(() => { const now = Date.now(); setClockTick(now); if (now >= loginWaitUntil) setLoginWaitUntil(0); }, 1000);
+    return () => clearInterval(timer);
+  }, [loginWaitUntil]);
   async function identify(token: string) {
     const response = await fetch("/api/education", { cache: "no-store", headers: { Authorization: `Bearer ${token}` } });
     const payload = await response.json();
@@ -30,13 +38,17 @@ export default function AuthPage() {
     if (token && active) await identify(token);
   }).catch((err) => { if (active) setError(err.message); }); return () => { active = false; }; }, []);
   async function submit(event: FormEvent) {
-    event.preventDefault(); setBusy(true); setError(""); setMessage("");
+    event.preventDefault(); if (entry === "learning" && loginWait > 0) return;
+    setBusy(true); setError(""); setMessage("");
     try {
       const client = await getConfiguredSupabaseClient();
       if (entry === "learning") {
         const response = await fetch("/api/education/learning-login", { method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ learnerId, accessCode }) });
         const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error || "登录失败，请稍后重试。");
+        if (!response.ok) {
+          if (response.status === 429) { const now = Date.now(); setClockTick(now); setLoginWaitUntil(now + Math.min(300, Math.max(15, Number(response.headers.get("retry-after")) || 30)) * 1000); }
+          throw new Error(payload.error || "登录失败，请稍后重试。");
+        }
         const { data, error } = await client.auth.setSession(payload.session);
         if (error || !data.session) throw new Error("登录会话未能保存，请重试。");
         setAccessCode(""); router.push(await identify(data.session.access_token));
@@ -73,7 +85,7 @@ export default function AuthPage() {
         <label htmlFor="email">邮箱</label><input id="email" type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={busy} />
         {mode !== "forgot" && <><label htmlFor="password">密码</label><input id="password" type="password" required minLength={8} autoComplete={mode === "signup" ? "new-password" : "current-password"} value={password} onChange={(e) => setPassword(e.target.value)} disabled={busy} /></>}
         {mode === "signup" && <><label htmlFor="confirm">再次输入密码</label><input id="confirm" type="password" required autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} disabled={busy} /><p className="edu-caption">新学生请直接使用学习 ID。教师与研究者权限由管理员配置，不能通过注册提升权限。</p></>}
-      </>}<button className="edu-button" disabled={busy} type="submit">{busy ? "正在处理…" : entry === "learning" ? "使用 ID 登录" : mode === "signin" ? "登录课程" : mode === "signup" ? "创建邮箱账号" : "发送重置邮件"}</button></form>
+      </>}<button className="edu-button" disabled={busy || (entry === "learning" && loginWait > 0)} type="submit">{busy ? "正在处理…" : entry === "learning" && loginWait > 0 ? `${loginWait} 秒后可重试` : entry === "learning" ? "使用 ID 登录" : mode === "signin" ? "登录课程" : mode === "signup" ? "创建邮箱账号" : "发送重置邮件"}</button></form>
     </>}{error && <p className="edu-inline-error" role="alert">{error}</p>}{message && <p role="status">{message}</p>}</section>
     <Link className="edu-text-link" href="/preview">先看看教学脚手架 →</Link>
   </main></div>;

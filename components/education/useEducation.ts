@@ -7,14 +7,19 @@ export type Overview = {
   user: { id: string; role: UserRole; learnerCode: string }; member: boolean; configs: PublishedTask[];
   sessions: SessionSummary[]; settings: Omit<CourseSettings, "inviteHash"> & { inviteEnabled: boolean };
   consent: Consent; aiEnabled: boolean; ai: {provider: AISelection["provider"] | null; model: string | null; configured: boolean; configurationError: boolean}; aiAvailability: Record<AISelection["provider"], boolean>; classroomEnabled: boolean; truncated: boolean;
+  teachingAcknowledgement: { version: number; acknowledgedAt: string } | null;
+  aiCapacity?: { concurrent: number; dailyRequests: number; usedToday: number; day: string; timezone: string };
 };
+export class EducationApiError extends Error {
+  constructor(message: string, public status: number, public retryAfter: number) { super(message); }
+}
 export async function educationApi<T = Record<string, unknown>>(query = "", body?: Record<string, unknown>): Promise<T> {
   const client = await getConfiguredSupabaseClient();
   const { data } = await client.auth.getSession();
   if (!data.session?.access_token) throw new Error("请先登录课程账号。");
   const response = await fetch(`/api/education${query}`, { method: body ? "POST" : "GET", cache: "no-store", headers: { Authorization: `Bearer ${data.session.access_token}`, ...(body ? { "Content-Type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error || "操作失败，请稍后重试。");
+  const result = await response.json().catch(() => { throw new EducationApiError("服务暂时不可用，输入仍保留，请稍后重试。", 503, 0); });
+  if (!response.ok) throw new EducationApiError(result.error || "操作失败，请稍后重试。", response.status, Math.min(86400, Math.max(0, Number(response.headers.get("retry-after")) || 0)));
   return result as T;
 }
 export function useEducation(enabled = true) {

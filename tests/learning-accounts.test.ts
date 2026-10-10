@@ -106,6 +106,8 @@ test("managed learning accounts keep ownership across login/reset and fail close
   assert.equal(authA.role, "student"); assert.notEqual(authA.userId, authB.userId);
   assert.ok((await listLearningAccounts(teacher)).accounts.every((account) => !account.learnerId.startsWith("T-")), "teacher credentials are not in the student roster");
   assert.equal((await overview(authA)).user.learnerCode, "L-001"); assert.equal((await overview(authA)).member, true);
+  await performAction(teacher, { action: "teachingPrivacy", notice: "测试用教学记录说明，不涉及真实学生", contact: "测试教师，课堂联系", retention: "测试结束清理", reviewed: true });
+  await performAction(authA, { action: "acknowledgeTeachingNotice", version: 1, acknowledged: true });
   await performAction(teacher, { action: "publish", unitId: 6, expectedVersion: 0, scheduledWeek: 7, reviewed: true, published: true, task: TASKS[6] });
   const started = await performAction(authA, { action: "start", unitId: 6, requestId: crypto.randomUUID() }) as any;
   await performAction(authA, { action: "answer", sessionId: started.session.id, stage: "initial", text: "仅供测试的初答", requestId: crypto.randomUUID() });

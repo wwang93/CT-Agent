@@ -7,7 +7,8 @@ import { applyAnswer, applyHint } from "@/lib/education/engine";
 import type { LearningSession } from "@/lib/education/types";
 import CourseHeader from "./CourseHeader";
 import AccessNotice from "./AccessNotice";
-import { downloadJson, educationApi, useEducation } from "./useEducation";
+import { downloadJson, educationApi, EducationApiError, useEducation } from "./useEducation";
+import TeachingNotice from "./TeachingNotice";
 
 function previewSession(unitId: number): LearningSession {
   const intervention = getInterventionForUnit(unitId)!;
@@ -19,27 +20,38 @@ export default function LearningWorkspace({ preview = false }: { preview?: boole
   const { data, loading, error: accessError, refresh } = useEducation(!preview);
   const [session, setSession] = useState<LearningSession | null>(null), [text, setText] = useState(""), [question, setQuestion] = useState(""), [busy, setBusy] = useState(false), [error, setError] = useState("");
   const [code, setCode] = useState(""), [language, setLanguage] = useState("英语"), [consent, setConsent] = useState(false), [message, setMessage] = useState("");
+  const [aiWaitUntil, setAIWaitUntil] = useState(0), [clockTick, setClockTick] = useState(Date.now());
   const pending = useRef<{ signature: string; id: string } | null>(null);
   useEffect(() => { if (preview) {setSession(previewSession(unit));setText("");setQuestion("");} }, [preview, unit]);
   useEffect(() => { setConsent(Boolean(data?.consent.enabled && data.consent.noticeVersion === data.settings.noticeVersion)); }, [data]);
+  useEffect(() => {
+    if (!aiWaitUntil) return;
+    const timer = setInterval(() => { const now = Date.now(); setClockTick(now); if (now >= aiWaitUntil) setAIWaitUntil(0); }, 1000);
+    return () => clearInterval(timer);
+  }, [aiWaitUntil]);
+  const aiWaitSeconds = Math.max(0, Math.ceil((aiWaitUntil - clockTick) / 1000));
+  const privacy = data?.settings.teachingPrivacy;
+  const noticeRead = Boolean(privacy && data?.teachingAcknowledgement?.version === privacy.version);
   async function action(body: Record<string, unknown>) {
     setBusy(true); setError(""); setMessage("");
     const signature = JSON.stringify(body);
     if (pending.current?.signature !== signature) pending.current = { signature, id: crypto.randomUUID() };
     const id = pending.current.id;
     try {
+      if (!preview && ["start", "answer", "hint", "chat"].includes(String(body.action)) && !noticeRead) throw new Error("请先阅读并确认页面上方的教学记录说明；研究参与是独立选择。");
+      if (body.action === "chat" && aiWaitSeconds > 0) throw new Error(`请等待 ${aiWaitSeconds} 秒后再试，问题仍保留；教师提示可继续使用。`);
       if (preview && session) {
         if (body.action === "answer") setSession(applyAnswer(session, { id, stage: body.stage, text: body.text }, new Date().toISOString()));
         if (body.action === "hint") setSession(applyHint(session, id, new Date().toISOString()));
       } else {
         const result = await educationApi<{ session?: LearningSession }>("", { ...body, requestId: id });
         if (result.session) setSession(result.session);
-        else { await refresh(); setMessage(body.action === "consent" ? "研究使用选择已更新。退出后，之后的研究读取与导出将排除你的历史记录；已合法导出的副本需联系研究负责人处理。" : "已加入课程。"); }
+        else { await refresh(); setMessage(body.action === "consent" ? "研究使用选择已更新。退出后，之后的研究读取与导出将排除你的历史记录；已合法导出的副本需联系研究负责人处理。" : body.action === "acknowledgeTeachingNotice" ? "已确认教学记录说明。研究参与仍由你单独自愿选择。" : "已加入课程。"); }
       }
       pending.current = null;
       if (body.action === "answer") setText("");
       if (body.action === "chat") setQuestion("");
-    } catch (err) { setError(err instanceof Error ? err.message : "操作失败。"); }
+    } catch (err) { setError(err instanceof Error ? err.message : "操作失败。"); if (body.action === "chat" && err instanceof EducationApiError && err.retryAfter > 0) { setClockTick(Date.now()); setAIWaitUntil(Date.now() + err.retryAfter * 1000); } }
     finally { setBusy(false); }
   }
   async function resume(id: string) { setBusy(true); setError(""); try { const result = await educationApi<{session: LearningSession}>(`?session=${encodeURIComponent(id)}`); setSession(result.session); setText(""); } catch (err) { setError((err as Error).message); } finally { setBusy(false); } }
@@ -51,6 +63,7 @@ export default function LearningWorkspace({ preview = false }: { preview?: boole
   const sessionAIReady = session?.ai ? Boolean(data?.aiAvailability[session.ai.provider]) : Boolean(data?.aiEnabled);
   const modelLabel = session?.ai ? `${session.ai.provider === "deepseek" ? "DeepSeek 官方" : "OpenAI"} / ${session.ai.model}` : data?.ai.provider === "deepseek" ? `DeepSeek 官方 / ${data.ai.model}` : `OpenAI / ${data?.ai.model || "未配置"}`;
   return <div className="edu-app"><CourseHeader active="student" />{preview && <div className="edu-preview-banner"><strong>样板预览</strong> · 教师编写的固定脚手架，不调用 AI、不保存输入、不产生研究数据。<Link href="/student">进入正式学习 →</Link></div>}
+    {!preview && data?.user.role === "student" && <div className="edu-page"><TeachingNotice key={privacy?.version ?? 0} privacy={privacy} acknowledged={noticeRead} busy={busy} onAcknowledge={() => action({ action: "acknowledgeTeachingNotice", version: privacy?.version, acknowledged: true })} />{aiWaitSeconds > 0 && <div className="edu-callout" role="status">AI 请求暂停，{aiWaitSeconds} 秒后可重试。不会自动重发；你的问题保留，教师提示仍可使用。</div>}</div>}
     {!preview && (!data || mismatch) ? <AccessNotice loading={loading} error={accessError} mismatch={mismatch ? "此页面供学生使用；教师可从工作台预览同样的学习流程。" : ""} onRetry={refresh} /> : !session ? <main className="edu-page"><div className="edu-page-heading"><div><div className="edu-eyebrow">我的学习 / {COURSE.id}</div><h1>把自己的理解留下来</h1><p>先选择一个已发布的任务，或继续之前的学习。</p></div><Link className="edu-button secondary" href="/">回到五次干预</Link></div>
       {!data?.member && <section className="edu-panel"><h2>加入教育心理学课程</h2><p>使用教师发放的邀请码加入。注册账号不代表已经加入课程。</p><label htmlFor="join-code">课程邀请码</label><div className="edu-inline-form"><input id="join-code" value={code} onChange={(e) => setCode(e.target.value)} maxLength={40} autoComplete="off" /><button className="edu-button" disabled={busy || !code.trim()} onClick={() => action({action:"join",code})}>加入课程</button></div></section>}
       <p className="edu-caption">当前学习 ID：{data?.user.learnerCode}。五次干预与聊天记录均归于这个身份；如 ID 不属于你，请到课程登录页退出并切换。</p>
