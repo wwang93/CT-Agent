@@ -4,7 +4,7 @@ import { getConfiguredSupabaseClient } from "@/lib/supabase-browser";
 import type { AISelection, Consent, CourseSettings, PublishedTask, SessionSummary } from "@/lib/education/types";
 import type { UserRole } from "@/lib/types";
 export type Overview = {
-  user: { id: string; role: UserRole; learnerCode: string }; member: boolean; configs: PublishedTask[];
+  user: { id: string; role: UserRole; learnerCode: string; canReadAllCourseRecords: boolean }; member: boolean; configs: PublishedTask[];
   sessions: SessionSummary[]; settings: Omit<CourseSettings, "inviteHash"> & { inviteEnabled: boolean };
   consent: Consent; aiEnabled: boolean; ai: {provider: AISelection["provider"] | null; model: string | null; configured: boolean; configurationError: boolean}; aiAvailability: Record<AISelection["provider"], boolean>; classroomEnabled: boolean; truncated: boolean;
   teachingAcknowledgement: { version: number; acknowledgedAt: string } | null;

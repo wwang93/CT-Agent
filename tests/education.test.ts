@@ -182,4 +182,11 @@ test("server workflow enforces roles, snapshots, consent, AI auditing and optimi
   assert.equal((await loadSession(other,simultaneous[0].session.id)).value.stage,"initial","reading own history remains possible after a notice update");
   await performAction(other,{action:"acknowledgeTeachingNotice",version:2,acknowledged:true});
   assert.equal((await overview(other)).teachingAcknowledgement?.version,2);
+  const settings = (await readRecord<any>("settings"))!;
+  await writeRecord("settings", { ...settings.value, teachingPrivacy: { ...settings.value.teachingPrivacy, administrationAccessVersion: undefined } }, "teacher", settings.revision);
+  await assert.rejects(() => performAction(other, { action: "acknowledgeTeachingNotice", version: 2, acknowledged: true }), /访问范围已变化/);
+  await assert.rejects(() => performAction(other, { action: "answer", sessionId: simultaneous[0].session.id, stage: "initial", text: "旧说明不能继续写入", requestId: crypto.randomUUID() }), /最新教学记录访问范围/);
+  assert.equal((await loadSession(other, simultaneous[0].session.id)).value.stage, "initial");
+  await performAction(teacher, { ...privacy, retention: "更新后的测试保存安排" });
+  assert.equal((await overview(other)).settings.teachingPrivacy?.version, 3);
 });

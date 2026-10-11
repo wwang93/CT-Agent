@@ -5,9 +5,10 @@ import { actionId, applyAnswer, applyHint, assertOwner, assertUnlocked, Educatio
 import { readRecord, writeRecord, listRecords } from "./store";
 import { coachReply, PROMPT_VERSION } from "./coach";
 import { aiConfigured, getAISelection, getAIStatus } from "./provider";
-import type { Consent, CourseSettings, LearningSession, PublishedTask } from "./types";
+import type { Consent, CourseSettings, LearningSession, PublishedTask, ResearchConsentStatus } from "./types";
 import type { UserRole } from "@/lib/types";
-import { issueLearningAccount, resetLearningAccessCode, verifiedLearningId } from "./learning-accounts";
+import { canReadAllCourseRecords, issueLearningAccount, requireCourseRecordAdministrator, resetLearningAccessCode, verifiedLearningId } from "./learning-accounts";
+import { ADMINISTRATION_ACCESS_VERSION, withCourseAdministrationNotice } from "./privacy";
 import { acquireAIPermit, aiCapacityStatus, releaseAIPermit } from "./ai-capacity";
 
 type Auth = { userId: string; role: UserRole };
@@ -21,7 +22,7 @@ async function requireMember(auth: Auth, allowClosed = false) {
   if (!await readRecord(`member:${auth.userId}`)) throw new EducationError("请先使用教师提供的课程邀请码加入课程。", 403);
   if (!allowClosed) {
     const settings = await getSettings();
-    if (!settings.teachingPrivacy?.reviewedAt) throw new EducationError("教师尚未确认教学记录说明与联系、保存安排，正式学习暂不可开始。", 409);
+    if (!settings.teachingPrivacy?.reviewedAt || settings.teachingPrivacy.administrationAccessVersion !== ADMINISTRATION_ACCESS_VERSION) throw new EducationError("教师尚未确认最新教学记录访问范围与联系、保存安排，正式学习暂不可开始。", 409);
     const ack = await readRecord<{ version: number }>(`teaching-ack:${auth.userId}`);
     if (ack?.value.version !== settings.teachingPrivacy.version) throw new EducationError("请先在我的学习首页阅读并确认最新教学记录说明；这不是研究参与同意。", 409);
   }
@@ -36,7 +37,7 @@ export async function overview(auth: Auth) {
   ]);
   const { inviteHash, ...publicSettings } = settings;
   const learningId = await verifiedLearningId(auth.userId);
-  return { user: { id: auth.userId, role: auth.role, learnerCode: learningId ?? learnerCode(auth.userId) }, member: auth.role !== "student" || Boolean(member),
+  return { user: { id: auth.userId, role: auth.role, learnerCode: learningId ?? learnerCode(auth.userId), canReadAllCourseRecords: await canReadAllCourseRecords(auth) }, member: auth.role !== "student" || Boolean(member),
     configs: configs.records.filter((item) => auth.role === "instructor" || (item.published && ACTIVE_UNIT_IDS.includes(item.task.unitId))),
     sessions: sessions.records.map(sessionSummary).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
     settings: { ...publicSettings, inviteEnabled: Boolean(inviteHash) }, consent: consent?.value ?? { enabled: false, noticeVersion: 0, updatedAt: "" },
@@ -48,10 +49,12 @@ export async function overview(auth: Auth) {
   };
 }
 export async function loadSession(auth: Auth, id: string) {
+  if (auth.role === "researcher") await requireCourseRecordAdministrator(auth);
   const record = await readRecord<LearningSession>(`session:${id}`);
   if (!record) throw new EducationError("没有找到这次学习记录。", 404);
   if (auth.role === "student") assertOwner(record.value, auth.userId);
-  else requireRole(auth, ["instructor"]);
+  else requireRole(auth, ["instructor", "researcher"]);
+  if (auth.role === "researcher") await auditAdministrationAccess(auth, "session", { sessionId: id });
   return record;
 }
 export async function performAction(auth: Auth, body: Record<string, unknown>) {
@@ -62,19 +65,19 @@ export async function performAction(auth: Auth, body: Record<string, unknown>) {
     case "teachingPrivacy": {
       requireRole(auth, ["instructor"]);
       if (body.reviewed !== true) throw new EducationError("请教师确认教学记录说明、保存安排和联系渠道。");
-      const notice = requiredText(body.notice, "教学记录说明", 4000), contact = requiredText(body.contact, "联系渠道", 200), retention = requiredText(body.retention, "保存期限及到期处理安排", 1000);
+      const notice = requiredText(withCourseAdministrationNotice(requiredText(body.notice, "教学记录说明", 4000)), "教学记录说明", 4000), contact = requiredText(body.contact, "联系渠道", 200), retention = requiredText(body.retention, "保存期限及到期处理安排", 1000);
       if (/待填写|TODO|请填写|\[填写/i.test(`${notice} ${contact} ${retention}`)) throw new EducationError("请填写实际联系渠道与保存安排，不要保留占位内容。");
       const record = await readRecord<CourseSettings>("settings");
       const previous = record?.value.teachingPrivacy;
-      const changed = !previous || previous.notice !== notice || previous.contact !== contact || previous.retention !== retention;
-      const teachingPrivacy = { notice, contact, retention, version: (previous?.version ?? 0) + (changed ? 1 : 0), reviewedAt: now };
+      const changed = !previous || previous.notice !== notice || previous.contact !== contact || previous.retention !== retention || previous.administrationAccessVersion !== ADMINISTRATION_ACCESS_VERSION;
+      const teachingPrivacy = { notice, contact, retention, version: (previous?.version ?? 0) + (changed ? 1 : 0), reviewedAt: now, administrationAccessVersion: ADMINISTRATION_ACCESS_VERSION };
       await writeRecord("settings", { ...(record?.value ?? defaults), teachingPrivacy, updatedAt: now }, auth.userId, record?.revision ?? 0);
       return { saved: true };
     }
     case "acknowledgeTeachingNotice": {
       await requireMember(auth, true);
       const privacy = (await getSettings()).teachingPrivacy;
-      if (!privacy || body.version !== privacy.version || body.acknowledged !== true) throw new EducationError("说明尚未发布或版本已变化，请重新阅读。", 409);
+      if (!privacy || privacy.administrationAccessVersion !== ADMINISTRATION_ACCESS_VERSION || body.version !== privacy.version || body.acknowledged !== true) throw new EducationError("说明尚未发布或访问范围已变化，请等待教师确认后重新阅读。", 409);
       const key = `teaching-ack:${auth.userId}`, record = await readRecord(key);
       await writeRecord(key, { version: privacy.version, acknowledgedAt: now }, auth.userId, record?.revision ?? 0);
       return { saved: true };
@@ -210,32 +213,46 @@ export async function performAction(auth: Auth, body: Record<string, unknown>) {
     default: throw new EducationError("不支持的操作。");
   }
 }
-export async function analytics(auth: Auth, forResearch: boolean, includeRecords = false) {
-  requireRole(auth, forResearch ? ["researcher"] : ["instructor"]);
+async function auditAdministrationAccess(auth: Auth, view: "list" | "session", details: { sessionId?: string; recordCount?: number }) {
+  await writeRecord(`access-audit:${crypto.randomUUID()}`, { actorId: auth.userId, actorRole: auth.role, scope: "course-administration", view, ...details, createdAt: new Date().toISOString() }, auth.userId, 0);
+}
+export async function analytics(auth: Auth, forResearch: boolean, includeRecords = false, forAdministration = false) {
+  requireRole(auth, forResearch || forAdministration ? ["researcher"] : ["instructor"]);
+  if (forAdministration) {
+    await requireCourseRecordAdministrator(auth);
+    if (includeRecords) throw new EducationError("全班记录管理视图不提供研究导出，请使用授权研究资料。", 403);
+  }
   const [all, settings, members] = await Promise.all([listRecords<LearningSession>("session:"), getSettings(), listRecords<{userId: string}>("member:")]);
+  if (includeRecords && (all.truncated || members.truncated)) throw new EducationError("记录超过当前读取上限，暂不可完整导出，请联系管理员扩展分页。", 409);
   // Consent ownership lives in the storage key; enumerate known members, not emails.
   const authorized = new Set<string>();
-  if (forResearch && settings.researchEnabled) {
+  const consentStates = new Map<string, ResearchConsentStatus>();
+  if (forResearch || forAdministration) {
     for (let start = 0; start < members.records.length; start += 20) {
       const batch = members.records.slice(start, start + 20);
       const values = await Promise.all(batch.map((member) => readRecord<Consent>(`consent:${member.userId}`)));
-      values.forEach((record, index) => { if (record?.value.enabled && record.value.noticeVersion === settings.noticeVersion) authorized.add(batch[index].userId); });
+      values.forEach((record, index) => {
+        const state: ResearchConsentStatus = !settings.researchEnabled ? "disabled" : !record?.value.enabled ? "not-consented" : record.value.noticeVersion !== settings.noticeVersion ? "outdated" : "authorized";
+        consentStates.set(batch[index].userId, state);
+        if (state === "authorized") authorized.add(batch[index].userId);
+      });
     }
   }
-  const sessions = all.records.filter((session) => !forResearch || authorized.has(session.ownerId));
+  const sessions = all.records.filter((session) => forAdministration || !forResearch || authorized.has(session.ownerId));
   const learningIds = new Map<string, string>();
-  if (!forResearch) {
+  if (!forResearch || forAdministration) {
     const owners = [...new Set(sessions.map((item) => item.ownerId))];
     for (let start = 0; start < owners.length; start += 20) {
       await Promise.all(owners.slice(start, start + 20).map(async (owner) => { const id = await verifiedLearningId(owner); if (id) learningIds.set(owner, id); }));
     }
   }
   // Research retains the original pseudonym rather than the distributed roster ID.
-  const rows = sessions.map((session) => ({ ...sessionSummary(session), learnerCode: learningIds.get(session.ownerId) ?? learnerCode(session.ownerId) }));
+  const rows = sessions.map((session) => ({ ...sessionSummary(session), learnerCode: learningIds.get(session.ownerId) ?? learnerCode(session.ownerId), ...(forAdministration ? { researchConsent: consentStates.get(session.ownerId) ?? (settings.researchEnabled ? "not-consented" : "disabled") } : {}) }));
+  if (forAdministration) await auditAdministrationAccess(auth, "list", { recordCount: rows.length });
   return { rows, total: rows.length, learners: new Set(sessions.map((item) => item.ownerId)).size, completed: rows.filter((item) => item.stage === "complete").length,
     hints: rows.reduce((sum, row) => sum + row.hints, 0), chats: rows.reduce((sum, row) => sum + row.chats, 0),
     aiErrors: rows.reduce((sum, row) => sum + row.aiErrors, 0),
-    members: forResearch ? undefined : members.records.length, researchEnabled: settings.researchEnabled, protocol: settings.researchProtocol,
+    members: forResearch && !forAdministration ? undefined : members.records.length, accessScope: forAdministration ? "course-administration" as const : forResearch ? "authorized-research" as const : "teaching" as const, researchEnabled: settings.researchEnabled, protocol: settings.researchProtocol,
     truncated: all.truncated || members.truncated, generatedAt: new Date().toISOString(),
     units: [...new Set([...ACTIVE_UNIT_IDS, ...rows.map((row) => row.unitId)])].map((id) => ({ unitId: id, started: rows.filter((row) => row.unitId === id).length, completed: rows.filter((row) => row.unitId === id && row.stage === "complete").length })),
     interventions: INTERVENTIONS.map((item) => ({ id: item.id, title: item.title, ready: item.ready,

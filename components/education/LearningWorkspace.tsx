@@ -10,6 +10,7 @@ import CourseHeader from "./CourseHeader";
 import AccessNotice from "./AccessNotice";
 import { downloadJson, educationApi, EducationApiError, useEducation } from "./useEducation";
 import TeachingNotice from "./TeachingNotice";
+import { ADMINISTRATION_ACCESS_VERSION, COURSE_ADMINISTRATION_NOTICE } from "@/lib/education/privacy";
 
 function previewSession(unitId: number): LearningSession {
   const intervention = getInterventionForUnit(unitId)!;
@@ -32,7 +33,7 @@ export default function LearningWorkspace({ preview = false }: { preview?: boole
   }, [aiWaitUntil]);
   const aiWaitSeconds = Math.max(0, Math.ceil((aiWaitUntil - clockTick) / 1000));
   const privacy = data?.settings.teachingPrivacy;
-  const noticeRead = Boolean(privacy && data?.teachingAcknowledgement?.version === privacy.version);
+  const noticeRead = Boolean(privacy?.administrationAccessVersion === ADMINISTRATION_ACCESS_VERSION && data?.teachingAcknowledgement?.version === privacy.version);
   async function action(body: Record<string, unknown>) {
     setBusy(true); setError(""); setMessage("");
     const signature = JSON.stringify(body);
@@ -47,7 +48,7 @@ export default function LearningWorkspace({ preview = false }: { preview?: boole
       } else {
         const result = await educationApi<{ session?: LearningSession }>("", { ...body, requestId: id });
         if (result.session) setSession(result.session);
-        else { await refresh(); setMessage(body.action === "consent" ? "研究使用选择已更新。退出后，之后的研究读取与导出将排除你的历史记录；已合法导出的副本需联系研究负责人处理。" : body.action === "acknowledgeTeachingNotice" ? "已确认教学记录说明。研究参与仍由你单独自愿选择。" : "已加入课程。"); }
+        else { await refresh(); setMessage(body.action === "consent" ? "研究使用选择已更新。退出后，之后的授权研究资料与导出将排除你的历史记录；课程教师和研究管理人员仍可按教学记录说明查看。已导出的副本请联系研究负责人处理。" : body.action === "acknowledgeTeachingNotice" ? "已确认教学记录说明。研究参与仍由你单独自愿选择。" : "已加入课程。"); }
       }
       pending.current = null;
       if (body.action === "answer") setText("");
@@ -78,7 +79,7 @@ export default function LearningWorkspace({ preview = false }: { preview?: boole
         </article>;
       })}</section>
       <section className="edu-panel"><h2>已保存的学习记录</h2>{!data?.sessions.length ? <p className="edu-muted">还没有记录。提交每个学习阶段后，内容会保存到课程账号。</p> : <div className="edu-record-list">{data.sessions.map((item) => <button key={item.id} onClick={() => resume(item.id)} disabled={busy}><span>{item.interventionId ? `活动 ${item.interventionId}` : "旧版学习"} · 单元 {item.unitId} · {item.stage === "complete" ? "理解记录已完成" : STAGES.find((stage) => stage.id === item.stage)?.short}</span><small>第 {item.scheduledWeek} 周 · {new Date(item.updatedAt).toLocaleString("zh-CN")}</small><span>查看 →</span></button>)}</div>}</section>
-      <section className="edu-panel"><h2>学习记录与研究使用</h2><p>正式学习会保存你的回答、提示使用、答疑对话与教师反馈，用于课程支持。请不要填写真实第三方姓名、联系方式或敏感个人经历。学习答疑由智能辅助生成，可能有误，不是教师本人回复。答疑所需的任务材料、近期对话和问题会由指定服务商处理，详情见教学记录说明。自动遮蔽邮箱和部分手机号不能保证匿名，请自行去除个人信息。</p>{data?.settings.researchEnabled ? <><p className="edu-prewrap">{data.settings.consentNotice}</p><p className="edu-caption">方案：{data.settings.researchProtocol} · 告知版本 {data.settings.noticeVersion}</p><label className="edu-check"><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />我自愿允许按以上告知，将课程记录用于研究。不同意或退出不影响课程学习。</label><button className="edu-button secondary" disabled={busy} onClick={() => action({action:"consent",enabled:consent,noticeVersion:data.settings.noticeVersion})}>保存我的选择</button></> : <p className="edu-caption">研究授权尚未启用。目前仅保存教学记录，研究端不会获得这些记录。</p>}</section>
+      <section className="edu-panel"><h2>学习记录与研究使用</h2><p>正式学习会保存你的回答、提示使用、答疑对话与教师反馈，用于课程支持。请不要填写真实第三方姓名、联系方式或敏感个人经历。学习答疑由智能辅助生成，可能有误，不是教师本人回复。答疑所需的任务材料、近期对话和问题会由指定服务商处理，详情见教学记录说明。自动遮蔽邮箱和部分手机号不能保证匿名，请自行去除个人信息。</p><p>{COURSE_ADMINISTRATION_NOTICE}</p>{data?.settings.researchEnabled ? <><p className="edu-prewrap">{data.settings.consentNotice}</p><p className="edu-caption">方案：{data.settings.researchProtocol} · 告知版本 {data.settings.noticeVersion}</p><label className="edu-check"><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />我自愿允许按以上告知，将课程记录用于研究。不同意或退出不影响课程学习。</label><button className="edu-button secondary" disabled={busy} onClick={() => action({action:"consent",enabled:consent,noticeVersion:data.settings.noticeVersion})}>保存我的选择</button></> : <p className="edu-caption">研究授权尚未启用。授权研究资料和导出不包含你的记录；课程教师及研究管理人员仍可按教学记录说明查看。</p>}</section>
     </main> : <main className="edu-workspace"><div className="edu-workspace-heading"><div><div className="edu-eyebrow">{session.interventionId ? `活动 ${session.interventionId}` : "旧版学习"} / 第 {session.task.scheduledWeek} 周 / {session.language}学习</div><h1>{task?.title}</h1></div><button className="edu-button secondary" disabled={busy} onClick={() => { if (preview) { setSession(previewSession(unit)); setText(""); setQuestion(""); } else { setSession(null); void refresh(); } }}>{preview ? "重新预览" : "返回学习记录"}</button></div>
       <ol className="edu-steps">{STAGES.map((stage,index) => <li key={stage.id} className={currentStage === stage.id ? "current" : answers.some((entry) => entry.stage === stage.id) ? "done" : ""}><b>{answers.some((entry) => entry.stage === stage.id) ? "✓" : String(index+1).padStart(2,"0")}</b><span>{stage.short}</span></li>)}</ol>
       <div className={`edu-task-grid ${isolated ? "independent" : ""}`}><section className="edu-task-main"><div className="edu-panel"><div className="edu-section-label">{currentStage === "transfer" ? "新情境 · 独立尝试" : "学习案例"}</div><p className="edu-case">{currentStage === "transfer" ? task?.prompts.transfer : task?.caseText}</p>{currentStage && <><h2>{STAGES.find((stage) => stage.id === currentStage)?.title}</h2>{currentStage !== "transfer" && <p>{task?.prompts[currentStage]}</p>}<label htmlFor="learner-answer">你的{currentStage === "reflection" ? "理解记录" : "解释"}</label><textarea id="learner-answer" value={text} maxLength={5000} onChange={(e) => setText(e.target.value)} placeholder="请用自己的语言写下解释；保留不确定的地方也可以。" rows={7} disabled={busy} /><div className="edu-submit-row"><span className="edu-caption">{text.length}/5000 · {preview ? "预览内容不会保存" : "提交后保存；未提交文字仅保留在本页"}</span><button className="edu-button" disabled={busy || !text.trim()} onClick={() => action({action:"answer",sessionId:session.id,stage:currentStage,text})}>{busy ? "正在处理…" : currentStage === "reflection" ? "确认并保存理解记录" : "提交，进入下一步 →"}</button></div>{isolated && <p className="edu-caption">本阶段先独立完成。概念卡与提示暂时收起；这是学习检查，不是受监考考试。</p>}</>}

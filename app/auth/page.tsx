@@ -29,7 +29,7 @@ export default function AuthPage() {
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "登录身份暂时无法读取，请重新登录。");
     const path = roleLandingPath(payload.user.role as UserRole);
-    setLanding(path); setIdentity(payload.user.role === "student" ? `学习 ID：${payload.user.learnerCode}` : payload.user.role === "instructor" ? `教师身份：${payload.user.learnerCode}` : "研究者账号");
+    setLanding(path); setIdentity(`${payload.user.role === "student" ? "学习 ID" : payload.user.role === "instructor" ? "教师 ID" : "研究管理 ID"}：${payload.user.learnerCode}`);
     setSignedIn(true);
     return path;
   }
@@ -75,12 +75,12 @@ export default function AuthPage() {
     <section className="edu-panel edu-login-panel"><div className="edu-section-label">课程账号</div><h2>{signedIn ? "欢迎回来" : "登录学习空间"}</h2>{signedIn ? <><h2>你已经登录</h2><p>{identity}</p><div className="edu-actions"><Link className="edu-button" href={landing}>进入工作台</Link><button className="edu-button secondary" disabled={busy} onClick={async () => {
       setBusy(true); try { const { error } = await (await getConfiguredSupabaseClient()).auth.signOut(); if (error) throw error; setSignedIn(false); setIdentity(""); setAccessCode(""); setMessage("已退出登录。公共设备请不要保存访问码。"); } catch (err) { setError((err as Error).message); } finally { setBusy(false); }
     }}>退出 / 切换账号</button></div></> : <>
-      <div className="edu-tabs" role="group" aria-label="登录方式"><button disabled={busy} className={entry === "learning" ? "active" : ""} onClick={() => switchEntry("learning")}>学生 / 教师 ID</button><button disabled={busy} className={entry === "email" ? "active" : ""} onClick={() => switchEntry("email")}>已有邮箱账号</button></div>
+      <div className="edu-tabs" role="group" aria-label="登录方式"><button disabled={busy} className={entry === "learning" ? "active" : ""} onClick={() => switchEntry("learning")}>课程 ID</button><button disabled={busy} className={entry === "email" ? "active" : ""} onClick={() => switchEntry("email")}>已有邮箱账号</button></div>
       {entry === "email" && <div className="edu-tabs">{([["signin", "邮箱登录"], ["forgot", "忘记密码"], ["signup", "创建邮箱账号"]] as const).map(([id, name]) => <button disabled={busy} className={mode === id ? "active" : ""} key={id} onClick={() => { setMode(id); setError(""); setMessage(""); }}>{name}</button>)}</div>}
       <form onSubmit={submit}>{entry === "learning" ? <>
-        <label htmlFor="learning-id">学生 / 教师 ID</label><input id="learning-id" name="username" required autoComplete="username" autoCapitalize="characters" spellCheck={false} maxLength={24} placeholder="学生 L-001 / 教师 T-001" value={learnerId} onChange={(e) => setLearnerId(e.target.value)} disabled={busy} />
+        <label htmlFor="learning-id">学生 / 教师 / 研究 ID</label><input id="learning-id" name="username" required autoComplete="username" autoCapitalize="characters" spellCheck={false} maxLength={24} placeholder="例如 L-001 / T-001 / R-001" value={learnerId} onChange={(e) => setLearnerId(e.target.value)} disabled={busy} />
         <label htmlFor="learning-code">个人访问码</label><input id="learning-code" name="password" type="password" required autoComplete="current-password" minLength={12} maxLength={128} value={accessCode} onChange={(e) => setAccessCode(e.target.value)} disabled={busy} />
-        <p className="edu-caption">访问码固定使用，不是短信验证码。学生忘记时联系教师，教师访问码由管理员重置；ID 和历史记录保留。请勿分享访问码，公共设备使用后退出登录。</p>
+        <p className="edu-caption">访问码固定使用，不是短信验证码。学生忘记时联系教师；教师和研究管理人员的访问码由管理员重置。ID 和历史记录保留。请勿分享访问码，公共设备使用后退出登录。</p>
       </> : <>
         <label htmlFor="email">邮箱</label><input id="email" type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={busy} />
         {mode !== "forgot" && <><label htmlFor="password">密码</label><input id="password" type="password" required minLength={8} autoComplete={mode === "signup" ? "new-password" : "current-password"} value={password} onChange={(e) => setPassword(e.target.value)} disabled={busy} /></>}

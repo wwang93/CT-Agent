@@ -17,5 +17,7 @@ test("simpler interface retains truthful assistance, handling and voluntary rese
   assert.match(TEACHING_NOTICE_DRAFT, /不是教师本人回复/);
   assert.match(TEACHING_NOTICE_DRAFT, /新加坡/);
   assert.match(TEACHING_NOTICE_DRAFT, /单独的自愿选择/);
+  assert.match(TEACHING_NOTICE_DRAFT, /包括未同意或已退出研究/);
+  assert.match(TEACHING_NOTICE_DRAFT, /查看操作会留痕/);
   assert.doesNotMatch(TEACHING_NOTICE_DRAFT, /API/);
 });

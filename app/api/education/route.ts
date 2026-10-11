@@ -18,6 +18,7 @@ export async function GET(request: Request) {
     if (url.searchParams.get("view") === "learningIds") return json(await listLearningAccounts(auth));
     if (url.searchParams.has("session")) return json({ session: (await loadSession(auth, url.searchParams.get("session")!)).value });
     if (url.searchParams.get("view") === "teaching") return json(await analytics(auth, false));
+    if (url.searchParams.get("view") === "administration") return json(await analytics(auth, true, url.searchParams.get("export") === "1", true));
     if (url.searchParams.get("view") === "research") return json(await analytics(auth, true, url.searchParams.get("export") === "1"));
     return json(await overview(auth));
   } catch (error) { return failure(error); }

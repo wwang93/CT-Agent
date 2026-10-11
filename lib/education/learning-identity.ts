@@ -29,7 +29,8 @@ export function validateAccessCode(value: unknown): string {
 
 export type LearningAccount = {
   learnerId: string;
-  role?: "student" | "instructor";
+  role?: "student" | "instructor" | "researcher";
+  researchAccess?: "all-course-records";
   userId?: string;
   status: "provisioning" | "active" | "resetting";
   credentialVersion: string;

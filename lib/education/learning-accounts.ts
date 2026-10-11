@@ -22,7 +22,7 @@ export async function listLearningAccounts(auth: Auth) {
   return { accounts: result.records.filter((item) => (item.role ?? "student") === "student").map(({ learnerId, status, createdAt, resetAt }) => ({ learnerId, status, createdAt, resetAt })), truncated: result.truncated };
 }
 
-async function assertManagedIdentity(userId: string, id: string, role: "student" | "instructor") {
+async function assertManagedIdentity(userId: string, id: string, role: UserRole) {
   const client = getSupabaseAdminClient();
   const { data, error } = await client.auth.admin.getUserById(userId);
   const metadata = data.user?.app_metadata;
@@ -35,7 +35,7 @@ async function assertManagedIdentity(userId: string, id: string, role: "student"
 }
 
 // Recover an interrupted create without adopting an unrelated existing account.
-async function recoverProvisionedUser(id: string, role: "student" | "instructor") {
+async function recoverProvisionedUser(id: string, role: UserRole) {
   const client = getSupabaseAdminClient();
   for (let page = 1; page <= 10; page++) {
     const { data, error } = await client.auth.admin.listUsers({ page, perPage: 100 });
@@ -49,7 +49,7 @@ async function recoverProvisionedUser(id: string, role: "student" | "instructor"
 
 export async function issueLearningAccount(auth: Auth, body: Record<string, unknown>) {
   instructor(auth);
-  if (normalizeLearningId(body.learnerId).startsWith("T-")) throw new EducationError("T- 开头的 ID 保留给管理员配置的教师身份。", 400);
+  if (/^[TR]-/.test(normalizeLearningId(body.learnerId))) throw new EducationError("T- 与 R- 开头的 ID 保留给管理员配置的教师或研究管理身份。", 400);
   return provisionIdentity(auth, body, "student");
 }
 
@@ -63,15 +63,36 @@ export async function bootstrapInstructorIdentity(learnerId: string) {
   return provisionIdentity({ userId: "authorized-local-administrator", role: "instructor" }, { learnerId: id }, "instructor");
 }
 
-async function provisionIdentity(auth: Auth, body: Record<string, unknown>, role: "student" | "instructor") {
+// Trusted setup only. This module is server-only; no public route exposes this
+// operation or accepts a staff role/access capability from a client.
+export async function provisionStaffIdentity(learnerId: string, role: "instructor" | "researcher", accessCode: string) {
+  const id = normalizeLearningId(learnerId);
+  if ((role !== "instructor" && role !== "researcher") || !new RegExp(`^${role === "instructor" ? "T" : "R"}-[0-9]{3}$`).test(id)) throw new EducationError("人员身份与保留 ID 类型不一致。", 400);
+  return provisionIdentity({ userId: "authorized-local-administrator", role: "instructor" }, { learnerId: id, accessCode: validateAccessCode(accessCode) }, role, role === "researcher" ? "all-course-records" : undefined);
+}
+
+export async function canReadAllCourseRecords(auth: Auth): Promise<boolean> {
+  if (auth.role !== "researcher") return false;
+  const mapping = await readRecord<{ learnerId: string; userId: string }>(`learning-user:${auth.userId}`);
+  if (!mapping || mapping.value.userId !== auth.userId) return false;
+  const account = await readRecord<LearningAccount>(accountKey(mapping.value.learnerId));
+  return Boolean(account?.value.status === "active" && account.value.userId === auth.userId && account.value.role === "researcher" && account.value.researchAccess === "all-course-records");
+}
+
+export async function requireCourseRecordAdministrator(auth: Auth) {
+  if (!await canReadAllCourseRecords(auth)) throw new EducationError("当前账号没有全班记录管理权限。", 403);
+}
+
+async function provisionIdentity(auth: Auth, body: Record<string, unknown>, role: UserRole, researchAccess?: "all-course-records") {
   const id = normalizeLearningId(body.learnerId), key = accountKey(id);
   let record = await readRecord<LearningAccount>(key);
   if (record && (record.value.role ?? "student") !== role) throw new EducationError("ID 已属于其他权限身份，不允许升级或覆盖。", 409);
+  if (record && record.value.researchAccess !== researchAccess) throw new EducationError("已有身份的记录访问范围不一致，不允许自动覆盖。", 409);
   if (record?.value.status === "active") return { skipped: true, learnerId: id };
   if (record?.value.status === "resetting") throw new EducationError("该 ID 正在重置，请使用重置访问码操作继续。", 409);
   const code = body.accessCode === undefined || body.accessCode === "" ? generateAccessCode() : validateAccessCode(body.accessCode);
   const client = getSupabaseAdminClient();
-  if (!record) record = await writeRecord(key, { learnerId: id, role, status: "provisioning", credentialVersion: crypto.randomUUID(), createdBy: auth.userId, createdAt: new Date().toISOString() }, auth.userId, 0);
+  if (!record) record = await writeRecord(key, { learnerId: id, role, ...(researchAccess ? { researchAccess } : {}), status: "provisioning", credentialVersion: crypto.randomUUID(), createdBy: auth.userId, createdAt: new Date().toISOString() }, auth.userId, 0);
   // CAS lock also protects retries and two teachers assigning the same ID.
   record = await writeRecord(key, { ...record.value, credentialVersion: crypto.randomUUID() }, auth.userId, record.revision);
   const version = record.value.credentialVersion;
