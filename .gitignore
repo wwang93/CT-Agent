@@ -3,6 +3,7 @@ node_modules/
 .env
 .env.local
 .vercel/
+.edgeone/
 npm-debug.log*
 data/store.json
 .open-next/
@@ -17,3 +18,4 @@ staff-access.local.txt
 staff-access.local.json
 outputs/education-roster-20261010/
 outputs/education-user-guide/
+outputs/edgeone-test/

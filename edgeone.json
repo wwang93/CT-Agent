@@ -1,0 +1,27 @@
+{
+  "installCommand": "npm ci",
+  "buildCommand": "npm run build:edgeone",
+  "outputDirectory": ".next",
+  "nodeVersion": "22.11.0",
+  "cloudFunctions": {
+    "overseasRegions": ["ap-singapore"],
+    "nodejs": {
+      "maxDuration": 60
+    }
+  },
+  "headers": [
+    {
+      "source": "/*",
+      "headers": [
+        { "key": "X-Robots-Tag", "value": "noindex, nofollow, noarchive" }
+      ]
+    },
+    {
+      "source": "/api/*",
+      "headers": [
+        { "key": "Cache-Control", "value": "private, no-store" },
+        { "key": "Pragma", "value": "no-cache" }
+      ]
+    }
+  ]
+}
