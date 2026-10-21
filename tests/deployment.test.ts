@@ -10,8 +10,10 @@ test("EdgeOne uses the full Next build, a bounded runtime and private API cachin
   assert.equal(config.buildCommand, "npm run build:edgeone");
   assert.equal(pkg.scripts["build:edgeone"], "next build");
   assert.equal(config.outputDirectory, ".next", "must not publish only static files or the Sites worker");
-  assert.equal(config.cloudFunctions.nodejs.maxDuration, 60, "allow DB work around the 30 second model timeout");
-  assert.deepEqual(config.cloudFunctions.overseasRegions, ["ap-singapore"]);
+  assert.equal(config.cloudFunctions.maxDuration, 60, "allow DB work around the 30 second model timeout");
+  assert.deepEqual(config.cloudFunctions.regions.overseas, ["ap-singapore"]);
+  assert.equal(config.cloudFunctions.nodejs, undefined, "use the current builder schema, not deprecated runtime-specific settings");
+  assert.equal(config.cloudFunctions.overseasRegions, undefined);
   const api = config.headers.find((rule: { source: string }) => rule.source === "/api/*");
   assert.equal(api.headers.find((header: { key: string }) => header.key === "Cache-Control").value, "private, no-store");
   assert.ok(!JSON.stringify(config).includes("DEEPSEEK_API_KEY"));

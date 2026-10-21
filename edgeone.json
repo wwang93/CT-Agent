@@ -4,10 +4,8 @@
   "outputDirectory": ".next",
   "nodeVersion": "22.11.0",
   "cloudFunctions": {
-    "overseasRegions": ["ap-singapore"],
-    "nodejs": {
-      "maxDuration": 60
-    }
+    "regions": { "overseas": ["ap-singapore"] },
+    "maxDuration": 60
   },
   "headers": [
     {
