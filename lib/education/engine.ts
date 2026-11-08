@@ -1,5 +1,6 @@
 import { ACTIVE_UNIT_IDS, STAGES, TASKS, type Stage, type Task } from "./course";
 import type { Entry, LearningSession } from "./types";
+import { finishStage, timingTotals } from "./timing";
 
 export class EducationError extends Error {
   constructor(message: string, public status = 400) { super(message); }
@@ -25,17 +26,22 @@ export function assertOwner(session: LearningSession, userId: string) {
 export function assertUnlocked(session: LearningSession, now = Date.now()) {
   if (session.pending && now - Date.parse(session.pending.startedAt) < 90_000) throw new EducationError("上一条请求仍在处理，请稍后重试。", 409);
 }
-export function applyAnswer(session: LearningSession, input: { id: string; stage: unknown; text: unknown }, now: string): LearningSession {
+export function assertCurrentAttempt(session: LearningSession) {
+  if (session.supersededBy) throw new EducationError("这次作答已保留为重做前记录，不能继续修改。请返回学习记录，继续新的作答；当前输入仍在页面中。", 409);
+}
+export function applyAnswer(session: LearningSession, input: { id: string; stage: unknown; text: unknown; observation?: unknown }, now: string): LearningSession {
   if (session.entries.some((entry) => entry.id === input.id)) return session;
   assertUnlocked(session);
+  assertCurrentAttempt(session);
   if (session.stage === "complete" || input.stage !== session.stage) throw new EducationError("学习阶段已变化，请刷新记录后继续。", 409);
   const text = requiredText(input.text, "你的解释");
   const entry: Entry = { id: input.id, kind: "answer", stage: session.stage, text, createdAt: now };
-  return { ...session, pending: undefined, entries: [...session.entries, entry], stage: nextStage(session.stage), updatedAt: now };
+  return { ...session, pending: undefined, entries: [...session.entries, entry], timing: finishStage(session, now, input.observation), stage: nextStage(session.stage), updatedAt: now };
 }
 export function applyHint(session: LearningSession, id: string, now: string): LearningSession {
   if (session.entries.some((entry) => entry.id === id)) return session;
   assertUnlocked(session);
+  assertCurrentAttempt(session);
   if (session.stage !== "revision") throw new EducationError("提示仅在解释与修订阶段提供；初始理解和迁移任务需要独立完成。", 409);
   const level = session.entries.filter((entry) => entry.kind === "hint").length;
   if (level >= 3) throw new EducationError("三个层级的提示已全部展开。请尝试用自己的语言修订解释。");
@@ -63,7 +69,8 @@ export function sessionSummary(session: LearningSession) {
   return { id: session.id, unitId: session.unitId, interventionId: session.interventionId ?? session.task.interventionId, scheduledWeek: session.task.scheduledWeek,
     provider: session.ai?.provider, model: session.ai?.model, stage: session.stage, createdAt: session.createdAt, updatedAt: session.updatedAt,
     hints: session.entries.filter((entry) => entry.kind === "hint").length,
-    chats: session.entries.filter((entry) => entry.kind === "chat").length, aiErrors: session.entries.filter((entry) => entry.kind === "ai_error").length, taskVersion: session.task.version };
+    chats: session.entries.filter((entry) => entry.kind === "chat").length, aiErrors: session.entries.filter((entry) => entry.kind === "ai_error").length, taskVersion: session.task.version,
+    attemptNumber: session.attemptNumber, restartOf: session.restartOf, supersededBy: session.supersededBy, supersededAt: session.supersededAt, ...timingTotals(session) };
 }
 export function redactText(text: string) {
   return text.replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[邮箱已遮盖]").replace(/(?<!\d)1[3-9]\d{9}(?!\d)/g, "[手机号已遮盖]");

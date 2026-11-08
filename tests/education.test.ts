@@ -8,6 +8,7 @@ import { analytics, loadSession, overview, performAction } from "../lib/educatio
 import { readRecord, writeRecord } from "../lib/education/store";
 import { requireAuthenticatedUser } from "../lib/auth-server";
 import { acquireAIPermit, releaseAIPermit, AICapacityError } from "../lib/education/ai-capacity";
+import { attemptViews, browserObservation, DEFAULT_STAGE_SECONDS, newTiming, timingTotals } from "../lib/education/timing";
 
 const now = "2026-09-04T12:00:00.000Z";
 const fresh = (): LearningSession => ({id:"sample",ownerId:"student-a",unitId:6,task:{task:structuredClone(TASKS[6]),version:1,published:true,scheduledWeek:6,teacherNotes:"",reviewedAt:now,reviewedBy:"teacher"},stage:"initial",entries:[],language:"英语",createdAt:now,updatedAt:now});
@@ -49,6 +50,18 @@ test("ownership, lock expiry, text validation and UUID validation", () => {
 test("research text redaction covers email and mainland mobile without claiming anonymity", () => {
   const redacted=redactText("例子 test@example.com 13812345678 张同学");
   assert.ok(!redacted.includes("test@example.com"));assert.ok(!redacted.includes("13812345678"));assert.ok(redacted.includes("张同学"));
+});
+test("soft timer records real overruns without blocking late answers and never fabricates legacy starts", () => {
+  const start="2026-11-08T12:00:00.000Z", end="2026-11-08T12:08:00.000Z";
+  const s={...fresh(),createdAt:start,timing:newTiming(start)};
+  const next=applyAnswer(s,{id:crypto.randomUUID(),stage:"initial",text:"超时仍提交",observation:{observedMs:999999999,hiddenMs:999999999,interruptions:3}},end);
+  assert.equal(next.stage,"revision");assert.equal(next.timing?.stages.initial?.elapsedMs,480000);assert.equal(next.timing?.stages.initial?.overrunMs,120000);
+  assert.equal(next.timing?.stages.initial?.observation?.observedMs,480000);assert.equal(next.timing?.stages.revision?.startedAt,end);
+  assert.equal(s.entries.length,0);assert.equal(s.timing.stages.initial?.submittedAt,undefined);
+  const legacy=applyAnswer(fresh(),{id:crypto.randomUUID(),stage:"initial",text:"旧页面无计时字段照常提交"},end);
+  assert.equal(legacy.timing?.stages.initial?.elapsedMs,undefined);assert.equal(legacy.timing?.stages.initial?.missingStart,true);
+  assert.equal(legacy.timing?.stages.revision?.startedAt,end);assert.equal(timingTotals(legacy).timingCoverage,"none");
+  assert.equal(browserObservation({observedMs:-1,hiddenMs:0,interruptions:0},500),undefined);
 });
 
 // HTTP/Postgres client double. No production database or real model is called.
@@ -189,4 +202,54 @@ test("server workflow enforces roles, snapshots, consent, AI auditing and optimi
   assert.equal((await loadSession(other, simultaneous[0].session.id)).value.stage, "initial");
   await performAction(teacher, { ...privacy, retention: "更新后的测试保存安排" });
   assert.equal((await overview(other)).settings.teachingPrivacy?.version, 3);
+});
+
+test("one redo is append-only, cross-version, concurrent-safe, preserves drafts and keeps legacy work usable", async(t)=>{
+  const fake=fakeDatabase(), keys=["SUPABASE_URL","SUPABASE_SERVICE_ROLE_KEY","EDU_CLASSROOM_ENABLED","EDU_AI_PROVIDER"];
+  const saved=Object.fromEntries(keys.map(k=>[k,process.env[k]]));
+  t.after(()=>{for(const k of keys){if(saved[k]===undefined)delete process.env[k];else process.env[k]=saved[k];}delete (globalThis as any).__CT_AGENT_SUPABASE_SERVER__;});
+  process.env.SUPABASE_URL="https://test.invalid";process.env.SUPABASE_SERVICE_ROLE_KEY="test-only";process.env.EDU_CLASSROOM_ENABLED="true";process.env.EDU_AI_PROVIDER="deepseek";
+  (globalThis as any).__CT_AGENT_SUPABASE_SERVER__=fake;
+  const teacher={userId:"teacher",role:"instructor" as const}, learner={userId:"redo-student",role:"student" as const}, other={userId:"redo-other",role:"student" as const};
+  await performAction(teacher,{action:"teachingPrivacy",notice:"测试教学记录与时间说明",contact:"测试教师",retention:"合成测试后清理",reviewed:true});
+  for(const a of [learner,other]){await writeRecord(`member:${a.userId}`,{userId:a.userId},a.userId,0);await performAction(a,{action:"acknowledgeTeachingNotice",version:1,acknowledged:true});}
+  const publish={action:"publish",unitId:10,expectedVersion:0,scheduledWeek:10,reviewed:true,published:true,task:TASKS[10]};
+  await performAction(teacher,publish);
+  const begin=()=>performAction(learner,{action:"start",unitId:10,requestId:crypto.randomUUID()}) as Promise<{session:LearningSession}>;
+  const first=(await begin()).session;
+  await performAction(learner,{action:"answer",sessionId:first.id,stage:"initial",text:"原始回答必须保留",requestId:crypto.randomUUID()});
+  const old=(await readRecord<LearningSession>(`session:${first.id}`))!;
+  // A saved visible chat fixture avoids real model calls and must survive redo.
+  await writeRecord(`session:${first.id}`,{...old.value,entries:[...old.value.entries,{id:crypto.randomUUID(),kind:"chat",stage:"revision",text:"原提问",reply:"原回复",createdAt:now}]},learner.userId,old.revision);
+  const before=structuredClone(await readRecord(`session:${first.id}`));
+  await performAction(teacher,{...publish,expectedVersion:1,task:{...TASKS[10],title:"老师修改过的新版本"}});
+  assert.equal((await begin()).session.id,first.id,"new task version does not replace active work");
+  await assert.rejects(()=>performAction(other,{action:"restart",sessionId:first.id,confirmed:true,requestId:crypto.randomUUID()}));
+  await assert.rejects(()=>performAction(learner,{action:"restart",sessionId:first.id,requestId:crypto.randomUUID()}),/确认/);
+  const redoBody={action:"restart",sessionId:first.id,confirmed:true,answerDraft:"未提交回答",questionDraft:"未发送问题"};
+  const concurrent=await Promise.all(Array.from({length:12},()=>performAction(learner,{...redoBody,requestId:crypto.randomUUID()}))) as {session:LearningSession}[];
+  assert.equal(new Set(concurrent.map(x=>x.session.id)).size,1,"every concurrent retry shares one insert/quota slot");
+  const redo=concurrent[0].session;
+  assert.notEqual(redo.id,first.id);assert.equal(redo.attemptNumber,2);assert.equal(redo.task.version,1,"redo pins the original task snapshot");assert.equal(redo.entries.length,0);assert.equal(redo.restartOf,first.id);
+  assert.equal(redo.restartSnapshot?.answerDraft,"未提交回答");assert.equal(redo.restartSnapshot?.questionDraft,"未发送问题");
+  assert.deepEqual(await readRecord(`session:${first.id}`),before,"restart does not rewrite any source bytes or revision");
+  const retired=(await loadSession(learner,first.id)).value;
+  assert.equal(retired.supersededBy,redo.id);assert.equal(retired.entries.length,2);assert.equal(retired.savedRestartDraft?.answerDraft,"未提交回答");
+  await assert.rejects(()=>performAction(learner,{action:"answer",sessionId:first.id,stage:"revision",text:"旧标签页不能覆盖",requestId:crypto.randomUUID()}),/重做前记录/);
+  await assert.rejects(()=>performAction(learner,{action:"chat",sessionId:first.id,text:"旧标签页答疑",requestId:crypto.randomUUID()}),/重做前记录/);
+  await assert.rejects(()=>performAction(learner,{...redoBody,sessionId:redo.id,requestId:crypto.randomUUID()}),/重做机会已使用/);
+  for(const stage of STAGES)await performAction(learner,{action:"answer",sessionId:redo.id,stage:stage.id,text:`重做${stage.id}`,requestId:crypto.randomUUID()});
+  assert.equal((await begin()).session.id,redo.id,"Start/Continue never silently consumes another attempt");
+  assert.equal((await overview(learner)).attemptLimits.find(x=>x.unitId===10)?.remainingRestarts,0);
+  const stats=await analytics(teacher,false);assert.equal(stats.total,2);assert.ok(stats.rows.some(r=>r.supersededBy===redo.id));
+  await assert.rejects(()=>performAction(learner,{action:"timingPolicy",suggestedSeconds:DEFAULT_STAGE_SECONDS}));
+  await assert.rejects(()=>performAction(teacher,{action:"timingPolicy",suggestedSeconds:{...DEFAULT_STAGE_SECONDS,initial:1}}));
+  await performAction(teacher,{action:"timingPolicy",suggestedSeconds:{...DEFAULT_STAGE_SECONDS,initial:600}});
+  assert.equal((await readRecord<LearningSession>(`session:${redo.id}`))?.value.timing?.suggestedSeconds.initial,360,"changing teacher policy never changes in-flight snapshots");
+  // Existing >2 attempts are preserved, can continue, but cannot gain a new redo.
+  for(let i=0;i<3;i++){const legacy={...fresh(),id:`legacy-${i}`,ownerId:other.userId,unitId:10,task:{...fresh().task,task:TASKS[10]},createdAt:`2026-10-0${i+1}T00:00:00.000Z`};await writeRecord(`session:${legacy.id}`,legacy,other.userId,0);}
+  await assert.rejects(()=>performAction(other,{action:"restart",sessionId:"legacy-2",confirmed:true,requestId:crypto.randomUUID()}),/至少两次/);
+  const legacyDone=await performAction(other,{action:"answer",sessionId:"legacy-2",stage:"initial",text:"旧作答继续",requestId:crypto.randomUUID()}) as {session:LearningSession};
+  assert.equal(legacyDone.session.stage,"revision");assert.equal(legacyDone.session.timing?.stages.initial?.missingStart,true);
+  const tie=attemptViews([{...first,id:"z",createdAt:now},{...redo,id:"a",restartOf:"z",createdAt:now}]);assert.equal(tie.find(s=>s.id==="z")?.attemptNumber,1);
 });

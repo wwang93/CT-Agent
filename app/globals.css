@@ -457,3 +457,12 @@ a {
     font-size: 14px;
   }
 }
+/* Soft timing never disables an answer or takes over keyboard focus. */
+.edu-app .edu-timer { margin: 0 0 20px; padding: 16px 20px; border: 1px solid #c5d7c4; background: #eef4e9; border-radius: 12px; color: #223d36; }
+.edu-app .edu-timer > div { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.edu-app .edu-timer [role="timer"] { font-size: 1.75rem; font-variant-numeric: tabular-nums; font-weight: 650; }
+.edu-app .edu-timer p { margin: 6px 0 0; font-size: .9rem; line-height: 1.7; }
+.edu-app .edu-timer.overtime { background: #faf4e7; border-color: #d7bf8e; color: #6b552a; }
+.edu-app .edu-attempt-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 0 0 20px; color: #64766e; }
+.edu-app .edu-timing-report { margin: 14px 0 24px; }
+.edu-app .edu-timing-report table { min-width: 720px; }

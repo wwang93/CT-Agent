@@ -9,5 +9,6 @@ export async function GET() {
     aiConfigured: getAIStatus().configured,
     ai: getAIStatus(),
     classroomEnabled: process.env.EDU_CLASSROOM_ENABLED === "true",
+    features: { softTiming: true, oneRestart: true, release: "edu-timing-redo-20261108" },
   }, { headers: { "Cache-Control": "no-store" } });
 }

@@ -1,7 +1,7 @@
 import "server-only";
 import crypto from "node:crypto";
 import { ACTIVE_UNIT_IDS, COURSE, INTERVENTIONS, getInterventionForUnit, type Stage } from "./course";
-import { actionId, applyAnswer, applyHint, assertOwner, assertUnlocked, EducationError, requiredText, sessionSummary, unitId, validateTask, redactText } from "./engine";
+import { actionId, applyAnswer, applyHint, assertCurrentAttempt, assertOwner, assertUnlocked, EducationError, requiredText, sessionSummary, unitId, validateTask, redactText } from "./engine";
 import { readRecord, writeRecord, listRecords } from "./store";
 import { coachReply, PROMPT_VERSION } from "./coach";
 import { aiConfigured, getAISelection, getAIStatus } from "./provider";
@@ -10,11 +10,14 @@ import type { UserRole } from "@/lib/types";
 import { canReadAllCourseRecords, issueLearningAccount, requireCourseRecordAdministrator, resetLearningAccessCode, verifiedLearningId } from "./learning-accounts";
 import { ADMINISTRATION_ACCESS_VERSION, withCourseAdministrationNotice } from "./privacy";
 import { acquireAIPermit, aiCapacityStatus, releaseAIPermit } from "./ai-capacity";
+import { attemptViews, endStage, MAX_ATTEMPTS, newTiming } from "./timing";
+import { STAGES } from "./course";
 
 type Auth = { userId: string; role: UserRole };
 const defaults: CourseSettings = { researchEnabled: false, researchProtocol: "", consentNotice: "", noticeVersion: 0, updatedAt: "" };
 const digest = (text: string) => crypto.createHash("sha256").update(text).digest("hex");
 export const learnerCode = (id: string) => `L-${digest(`${COURSE.id}:${id}`).slice(0, 12)}`;
+const restartSessionId = (owner: string, unit: number) => digest(`${COURSE.id}:${owner}:unit:${unit}:one-restart-v1`).slice(0,32);
 function requireRole(auth: Auth, roles: UserRole[]) { if (!roles.includes(auth.role)) throw new EducationError("当前账号没有此操作的权限。", 403); }
 async function requireMember(auth: Auth, allowClosed = false) {
   requireRole(auth, ["student"]);
@@ -39,7 +42,8 @@ export async function overview(auth: Auth) {
   const learningId = await verifiedLearningId(auth.userId);
   return { user: { id: auth.userId, role: auth.role, learnerCode: learningId ?? learnerCode(auth.userId), canReadAllCourseRecords: await canReadAllCourseRecords(auth) }, member: auth.role !== "student" || Boolean(member),
     configs: configs.records.filter((item) => auth.role === "instructor" || (item.published && ACTIVE_UNIT_IDS.includes(item.task.unitId))),
-    sessions: sessions.records.map(sessionSummary).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+    sessions: attemptViews(sessions.records).map(sessionSummary).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+    attemptLimits: ACTIVE_UNIT_IDS.map(unitId => ({ unitId, used: sessions.records.filter(s => s.unitId === unitId).length, maxAttempts: MAX_ATTEMPTS, remainingRestarts: Math.max(0, MAX_ATTEMPTS - Math.max(1, sessions.records.filter(s => s.unitId === unitId).length)) })),
     settings: { ...publicSettings, inviteEnabled: Boolean(inviteHash) }, consent: consent?.value ?? { enabled: false, noticeVersion: 0, updatedAt: "" },
     aiEnabled: getAIStatus().configured, ai: getAIStatus(),
     aiAvailability: { deepseek: Boolean(process.env.DEEPSEEK_API_KEY?.trim()), openai: Boolean(process.env.OPENAI_API_KEY?.trim()) },
@@ -55,11 +59,27 @@ export async function loadSession(auth: Auth, id: string) {
   if (auth.role === "student") assertOwner(record.value, auth.userId);
   else requireRole(auth, ["instructor", "researcher"]);
   if (auth.role === "researcher") await auditAdministrationAccess(auth, "session", { sessionId: id });
+  // Derive retirement from the single replacement slot. Never clear or rewrite
+  // the original record merely to render its status.
+  const replacement = await readRecord<LearningSession>(`session:${restartSessionId(record.value.ownerId, record.value.unitId)}`);
+  if (replacement?.value.restartOf === id) {
+    const view = attemptViews([record.value,replacement.value]).find(s => s.id === id)!;
+    return { ...record, value: view };
+  }
   return record;
 }
 export async function performAction(auth: Auth, body: Record<string, unknown>) {
   const now = new Date().toISOString();
   switch (body.action) {
+    case "timingPolicy": {
+      requireRole(auth,["instructor"]);
+      const seconds = body.suggestedSeconds as Record<string, unknown> | undefined;
+      if (!seconds || STAGES.some(s => !Number.isInteger(seconds[s.id]) || Number(seconds[s.id]) < 60 || Number(seconds[s.id]) > 7200)) throw new EducationError("各阶段建议用时须为 1—120 分钟的整数分钟。");
+      if (STAGES.some(s => Number(seconds[s.id]) % 60 !== 0)) throw new EducationError("请按整数分钟设置建议用时。");
+      const record = await readRecord<CourseSettings>("settings");
+      await writeRecord("settings",{ ...(record?.value ?? defaults), timingPolicy: { version: (record?.value.timingPolicy?.version ?? 0) + 1, suggestedSeconds: Object.fromEntries(STAGES.map(s => [s.id, Number(seconds[s.id])])) as Record<Stage,number> }, updatedAt: now },auth.userId,record?.revision ?? 0);
+      return { saved: true };
+    }
     case "issueLearningId": return issueLearningAccount(auth, body);
     case "resetLearningCode": return resetLearningAccessCode(auth, body);
     case "teachingPrivacy": {
@@ -136,23 +156,58 @@ export async function performAction(auth: Auth, body: Record<string, unknown>) {
     case "start": {
       await requireMember(auth);
       const unit = unitId(body.unitId), requestId = actionId(body.requestId);
+      const own = await listRecords<LearningSession>("session:", auth.userId);
+      const existing = own.records.find((item) => item.startRequestId === requestId && item.unitId === unit);
+      if (existing) return { session: (await loadSession(auth,existing.id)).value };
+      const same = attemptViews(own.records.filter(item => item.unitId === unit));
+      const active = [...same].reverse().find(item => item.stage !== "complete" && !item.supersededBy);
+      if (active) return { session: active };
+      // Old clients' Start/Continue remains safe: it never silently spends a redo.
+      if (same.length) return { session: same.at(-1)! };
+      if (own.truncated) throw new EducationError("学习记录读取不完整，暂不能新开作答，请联系教师。",409);
       const config = await readRecord<PublishedTask>(`config:${unit}`);
       if (!config?.value.published) throw new EducationError("教师尚未发布本单元任务。", 409);
       if (config.value.interventionId !== getInterventionForUnit(unit)!.id) throw new EducationError("请教师审核并发布新的讲义干预版本；旧版记录保留，但不自动纳入本次干预。", 409);
-      const own = await listRecords<LearningSession>("session:", auth.userId);
-      const existing = own.records.find((item) => item.startRequestId === requestId && item.unitId === unit);
-      if (existing) return { session: existing };
-      const same = own.records.filter((item) => item.unitId === unit && item.task.version === config.value.version);
-      const active = same.find((item) => item.stage !== "complete");
-      if (active) return { session: active };
-      if (same.length >= 3) throw new EducationError("本版本已有三次学习记录，请先回看记录或联系教师。");
-      // Concurrent starts compete for the same attempt slot, not separate IDs.
-      const id = digest(`${auth.userId}:${unit}:v${config.value.version}:attempt:${same.length}`).slice(0, 32);
+      const id = digest(`${COURSE.id}:${auth.userId}:unit:${unit}:first-attempt-v1`).slice(0, 32);
       const session: LearningSession = { id, startRequestId: requestId, ownerId: auth.userId, unitId: unit,
         interventionId: config.value.interventionId, courseVersion: COURSE.version, ai: getAISelection(),
-        task: config.value, stage: "initial", entries: [], language: requiredText(body.language ?? "英语", "所学语言", 30), createdAt: now, updatedAt: now };
+        task: config.value, stage: "initial", entries: [], language: requiredText(body.language ?? "英语", "所学语言", 30), createdAt: now, updatedAt: now,
+        attemptNumber: 1, timing: newTiming(now,(await getSettings()).timingPolicy) };
       try { await writeRecord(`session:${id}`, session, auth.userId, 0); }
       catch (error) {
+        if (!(error instanceof EducationError) || error.status !== 409) throw error;
+        const concurrent = await readRecord<LearningSession>(`session:${id}`);
+        if (!concurrent) throw error;
+        return { session: concurrent.value };
+      }
+      return { session };
+    }
+    case "restart": {
+      await requireMember(auth);
+      const requestId = actionId(body.requestId);
+      if (body.confirmed !== true) throw new EducationError("请确认使用唯一一次重做机会，原回答和聊天将继续保留。");
+      const source = (await loadSession(auth,requiredText(body.sessionId,"学习记录编号",64))).value;
+      const unit = unitId(source.unitId), id = restartSessionId(auth.userId,unit);
+      const existing = await readRecord<LearningSession>(`session:${id}`);
+      if (existing) {
+        if (existing.value.restartOf === source.id || existing.value.startRequestId === requestId) return { session: existing.value };
+        throw new EducationError("本次干预的重做机会已使用，请继续或回看已保存记录。",409);
+      }
+      assertCurrentAttempt(source); assertUnlocked(source);
+      const own = await listRecords<LearningSession>("session:",auth.userId);
+      if (own.truncated) throw new EducationError("记录读取不完整，暂不能重做，请联系教师。",409);
+      if (own.records.filter(s => s.unitId === unit).length >= MAX_ATTEMPTS) throw new EducationError("本次干预已有至少两次作答，不能再重做。历史记录和未完成作答均保留。",409);
+      const draft = (value: unknown, limit: number) => { if (value === undefined) return ""; if (typeof value !== "string" || value.length > limit) throw new EducationError("重做前草稿格式无效，输入仍保留。"); return value; };
+      const session: LearningSession = { id, startRequestId: requestId, ownerId: auth.userId, unitId: unit,
+        interventionId: source.interventionId ?? source.task.interventionId, courseVersion: source.courseVersion, ai: source.ai ?? getAISelection(),
+        task: source.task, stage: "initial", entries: [], language: source.language, createdAt: now, updatedAt: now, attemptNumber: 2, restartOf: source.id,
+        timing: newTiming(now,(await getSettings()).timingPolicy), restartSnapshot: { sourceSessionId: source.id, sourceStage: source.stage, restartedAt: now,
+          answerDraft: draft(body.answerDraft,5000), questionDraft: draft(body.questionDraft,1000),
+          ...(source.stage !== "complete" ? { stageTiming: endStage(source.timing,source.stage,now,body.observation,false) } : {}) } };
+      // One deterministic insert is both the new history and the quota claim.
+      // Concurrent retries converge here. No destructive source update or migration.
+      try { await writeRecord(`session:${id}`,session,auth.userId,0); }
+      catch(error) {
         if (!(error instanceof EducationError) || error.status !== 409) throw error;
         const concurrent = await readRecord<LearningSession>(`session:${id}`);
         if (!concurrent) throw error;
@@ -166,11 +221,13 @@ export async function performAction(auth: Auth, body: Record<string, unknown>) {
       const record = await loadSession(auth, id), session = record.value;
       if (session.entries.some((entry) => entry.id === requestId)) return { session };
       if (body.action === "answer" || body.action === "hint") {
-        const updated = body.action === "answer" ? applyAnswer(session, { id: requestId, stage: body.stage, text: body.text }, now) : applyHint(session, requestId, now);
+        const timed = session.timing ? session : { ...session, timing: { ...newTiming(now,(await getSettings()).timingPolicy), stages: {} } };
+        const updated = body.action === "answer" ? applyAnswer(timed, { id: requestId, stage: body.stage, text: body.text, observation: body.observation }, now) : applyHint(session, requestId, now);
         await writeRecord(`session:${id}`, updated, auth.userId, record.revision);
         return { session: updated };
       }
       assertUnlocked(session);
+      assertCurrentAttempt(session);
       if (session.stage !== "revision") throw new EducationError("个性化答疑仅在解释与修订阶段开放。", 409);
       if (session.entries.filter((entry) => entry.kind === "chat").length >= 8) throw new EducationError("本次学习已完成八轮答疑。请先整理并提交自己的解释，或向教师求助。");
       if (session.entries.filter((entry) => entry.kind === "chat" || entry.kind === "ai_error").length >= 20) throw new EducationError("本次学习的答疑请求已达上限，请使用教师提示或联系教师。", 429);
@@ -238,7 +295,7 @@ export async function analytics(auth: Auth, forResearch: boolean, includeRecords
       });
     }
   }
-  const sessions = all.records.filter((session) => forAdministration || !forResearch || authorized.has(session.ownerId));
+  const sessions = attemptViews(all.records).filter((session) => forAdministration || !forResearch || authorized.has(session.ownerId));
   const learningIds = new Map<string, string>();
   if (!forResearch || forAdministration) {
     const owners = [...new Set(sessions.map((item) => item.ownerId))];
@@ -264,6 +321,8 @@ export async function analytics(auth: Auth, forResearch: boolean, includeRecords
       courseVersion: session.courseVersion, taskVersion: session.task.version, ai: session.ai,
       taskSnapshot: JSON.parse(redactText(JSON.stringify(session.task.task))), prompts: JSON.parse(redactText(JSON.stringify(session.task.task.prompts))),
       language: redactText(session.language), stage: session.stage, createdAt: session.createdAt, updatedAt: session.updatedAt,
+      attemptNumber: session.attemptNumber, restartOf: session.restartOf, supersededBy: session.supersededBy, supersededAt: session.supersededAt, timing: session.timing,
+      ...(session.restartSnapshot ? { restartSnapshot: JSON.parse(redactText(JSON.stringify(session.restartSnapshot))) } : {}),
       entries: session.entries.map(({id, kind, stage, text, reply, createdAt, level, model, provider, servedModel, thinking, promptVersion, tokens, inputTokens, outputTokens, latencyMs, requestId, errorCode}) =>
         ({id,kind,stage,text:redactText(text),reply:reply ? redactText(reply) : undefined,createdAt,level,model,provider,servedModel,thinking,promptVersion,tokens,inputTokens,outputTokens,latencyMs,requestId,errorCode})),
     })), exportNotice: "仅含导出时仍同意当前告知版本的学生。假名化并非匿名化；自动遮蔽邮箱和部分电话不保证去除个人信息，分享前必须人工审查。" } : {}),

@@ -6,7 +6,7 @@ import { listLearningAccounts } from "@/lib/education/learning-accounts";
 import { AICapacityError } from "@/lib/education/ai-capacity";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
-const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { "Cache-Control": "private, no-store" } });
+const json = (body: unknown, status = 200) => NextResponse.json({ ...(body as object), serverNow: new Date().toISOString() }, { status, headers: { "Cache-Control": "private, no-store" } });
 function failure(error: unknown) {
   if (error instanceof AICapacityError) return NextResponse.json({ error: error.message }, { status: 429, headers: { "Cache-Control": "private, no-store", "Retry-After": String(error.retryAfter) } });
   if (error instanceof EducationError || error instanceof AuthError) return json({ error: error.message }, error.status);

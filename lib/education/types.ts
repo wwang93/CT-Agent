@@ -1,5 +1,9 @@
 import type { Stage, Task } from "./course";
 export type AISelection = { provider: "deepseek" | "openai"; model: string; thinking: "disabled" | "provider-default" };
+export type BrowserObservation = { observedMs: number; hiddenMs: number; interruptions: number; source: "browser-reported-partial" };
+export type StageTiming = { startedAt?: string; submittedAt?: string; endedAt?: string; elapsedMs?: number; overrunMs?: number; missingStart?: boolean; observation?: BrowserObservation };
+export type SessionTiming = { policyVersion: "soft-timer-v1"; configurationVersion: number; suggestedSeconds: Record<Stage, number>; stages: Partial<Record<Stage, StageTiming>> };
+export type RestartSnapshot = { sourceSessionId: string; sourceStage: LearningSession["stage"]; restartedAt: string; answerDraft: string; questionDraft: string; stageTiming?: StageTiming };
 export type PublishedTask = { task: Task; version: number; published: boolean; scheduledWeek: number; interventionId?: number; teacherNotes: string; reviewedAt: string; reviewedBy: string };
 export type Entry = { id: string; kind: "answer" | "hint" | "chat" | "feedback" | "ai_error"; stage: Stage; text: string; createdAt: string; level?: number; reply?: string; model?: string; provider?: AISelection["provider"]; servedModel?: string; thinking?: AISelection["thinking"]; promptVersion?: string; tokens?: number; inputTokens?: number; outputTokens?: number; latencyMs?: number; requestId?: string; errorCode?: string; authorRole?: string };
 export type LearningSession = {
@@ -10,11 +14,19 @@ export type LearningSession = {
   interventionId?: number;
   courseVersion?: string;
   ai?: AISelection;
+  attemptNumber?: number;
+  restartOf?: string;
+  restartSnapshot?: RestartSnapshot;
+  timing?: SessionTiming;
+  // Read-model fields derived from the replacement record, never a history reset.
+  supersededBy?: string;
+  supersededAt?: string;
+  savedRestartDraft?: RestartSnapshot;
 };
 export type TeachingPrivacy = { notice: string; contact: string; retention: string; version: number; reviewedAt: string; administrationAccessVersion?: number };
-export type CourseSettings = { inviteHash?: string; researchEnabled: boolean; researchProtocol: string; consentNotice: string; noticeVersion: number; updatedAt: string; teachingPrivacy?: TeachingPrivacy };
+export type CourseSettings = { inviteHash?: string; researchEnabled: boolean; researchProtocol: string; consentNotice: string; noticeVersion: number; updatedAt: string; teachingPrivacy?: TeachingPrivacy; timingPolicy?: { version: number; suggestedSeconds: Record<Stage, number> } };
 export type Consent = { enabled: boolean; noticeVersion: number; updatedAt: string };
 export type Stored<T> = { value: T; revision: number };
 export type ResearchConsentStatus = "authorized" | "not-consented" | "outdated" | "disabled";
-export type SessionSummary = { id: string; unitId: number; interventionId?: number; scheduledWeek: number; stage: LearningSession["stage"]; createdAt: string; updatedAt: string; hints: number; chats: number; aiErrors: number; learnerCode?: string; taskVersion: number; provider?: AISelection["provider"]; model?: string; researchConsent?: ResearchConsentStatus };
+export type SessionSummary = { id: string; unitId: number; interventionId?: number; scheduledWeek: number; stage: LearningSession["stage"]; createdAt: string; updatedAt: string; hints: number; chats: number; aiErrors: number; learnerCode?: string; taskVersion: number; provider?: AISelection["provider"]; model?: string; researchConsent?: ResearchConsentStatus; attemptNumber?: number; restartOf?: string; supersededBy?: string; supersededAt?: string; timedElapsedMs?: number; timingCoverage?: "none" | "partial" | "full" };
 export type Analytics = { rows: SessionSummary[]; total: number; learners: number; completed: number; hints: number; chats: number; aiErrors: number; members?: number; accessScope?: "teaching" | "authorized-research" | "course-administration"; researchEnabled: boolean; protocol: string; truncated: boolean; generatedAt: string; units: {unitId: number; started: number; completed: number}[]; interventions: {id: number; title: string; ready: boolean; started: number; completed: number}[]; records?: unknown[] };
