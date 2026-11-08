@@ -41,6 +41,6 @@ export default function StageTimer({ session, now }: {session: LearningSession; 
   const elapsed=Math.max(0,now-Date.parse(timing.startedAt)), remaining=seconds*1000-elapsed, overtime=remaining<=0;
   return <div className={`edu-timer ${overtime ? "overtime" : ""}`}>
     <div><strong>{overtime?"已超过建议时间":"建议时间剩余"}</strong><span role="timer" aria-live="off">{durationLabel(Math.abs(remaining))}</span></div>
-    <p role="status">{overtime?"可以继续作答，不会自动提交或扣分。":"仅作节奏提醒，到时仍可继续作答。"} 本阶段建议 {seconds/60} 分钟，已用 {durationLabel(elapsed)}。</p>
+    <p><span role="status">{overtime?"可以继续作答，不会自动提交或扣分。":"仅作节奏提醒，到时仍可继续作答。"}</span> 本阶段建议 {seconds/60} 分钟，已用 {durationLabel(elapsed)}。</p>
   </div>;
 }
