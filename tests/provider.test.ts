@@ -27,8 +27,14 @@ test("completion parameters and credentials are provider-specific",()=>{
 test("coach context excludes future independent prompts and applies basic text minimization",()=>{
   const session:LearningSession={id:"test",ownerId:"test",unitId:10,stage:"revision",language:"英语",entries:[{id:"a",kind:"answer",stage:"initial",text:"我的解释 student@example.com 13812345678",createdAt:"now"}],createdAt:"now",updatedAt:"now",
     task:{task:TASKS[10],version:1,published:true,scheduledWeek:10,interventionId:2,teacherNotes:"",reviewedAt:"now",reviewedBy:"teacher"}};
-  const context=JSON.stringify(coachMessages(session,"帮我分析证据"));
-  assert.ok(context.includes(TASKS[10].prompts.revision));assert.ok(!context.includes(TASKS[10].prompts.transfer));assert.ok(!context.includes(TASKS[10].prompts.reflection));
+  const messages=coachMessages(session,"帮我分析证据");
+  const system=String(messages[0].content);
+  const material=JSON.parse(system.split("教师材料：")[1].split("\n教师补充：")[0]);
+  assert.equal(material.initialPrompt,TASKS[10].prompts.initial);
+  assert.equal(material.revisionPrompt,TASKS[10].prompts.revision);
+  assert.deepEqual(Object.keys(material).sort(),["title","caseText","objective","initialPrompt","revisionPrompt","concepts","criteria","source"].sort());
+  const context=messages.map(message=>String(message.content)).join("\n");
+  assert.ok(!context.includes(JSON.stringify(TASKS[10].prompts.transfer)));assert.ok(!context.includes(JSON.stringify(TASKS[10].prompts.reflection)));
   assert.ok(!context.includes("student@example.com"));assert.ok(!context.includes("13812345678"));
   assert.throws(()=>coachMessages({...session,stage:"initial"},"跳过初答"));assert.throws(()=>coachMessages({...session,stage:"transfer"},"帮我作答"));
 });

@@ -31,6 +31,26 @@ test("four stage transitions are sequential, append-only and retry-idempotent", 
   assert.equal(session.stage,"complete");assert.equal(session.entries.length,4);
   assert.throws(()=>applyAnswer(session,{id:crypto.randomUUID(),stage:"reflection",text:"again"},now));
 });
+test("Week 10 teacher revision separates the two-solution revision from one-solution transfer without changing timer defaults", () => {
+  const task = validateTask(TASKS[10], 10);
+  assert.ok(task.caseText.includes("语法正确、请求也表述清楚"));
+  assert.ok(task.caseText.includes("语气有些生硬"));
+  for (const question of ["①你观察到的问题是什么", "②双方产生的矛盾点是什么", "③你想到的第一方案是什么", "④你的方案基于哪些假设和条件", "⑤还缺少哪些信息"]) assert.ok(task.prompts.initial.includes(question));
+  assert.equal((task.prompts.initial.match(/④/g) ?? []).length, 1);
+  assert.ok(task.prompts.initial.includes("不需要改写邮件"));
+  assert.ok(!task.prompts.initial.includes("两种不同的问题表征"));
+  assert.ok(task.prompts.revision.includes("至少两个不同方案"));
+  assert.ok(task.prompts.revision.includes("⑤最后标明改变了什么"));
+  assert.ok(task.prompts.transfer.includes("可能因"), "the missing details are a possible explanation, not proven cause");
+  assert.ok(task.prompts.transfer.includes("重新表述问题，生成一个解决方案"));
+  assert.ok(task.prompts.transfer.includes("比较你的方案和上一个案例的改进方案"));
+  assert.ok(!task.prompts.transfer.includes("至少两个"));
+  assert.ok(!task.prompts.reflection.includes("答疑答疑"));
+  assert.ok(!task.criteria.some(c => c.includes("两种问题表征")));
+  assert.ok(task.criteria.some(c => c.startsWith("解释与修订阶段") && c.includes("至少两个")));
+  assert.ok(task.criteria.some(c => c.startsWith("独立迁移阶段提出一个方案")));
+  assert.deepEqual(DEFAULT_STAGE_SECONDS, {initial:360, revision:600, transfer:480, reflection:240});
+});
 test("hints are limited to three and unavailable in independent stages", () => {
   let session=fresh(); assert.throws(()=>applyHint(session,crypto.randomUUID(),now));
   session=applyAnswer(session,{id:crypto.randomUUID(),stage:"initial",text:"初答"},now);
@@ -202,6 +222,36 @@ test("server workflow enforces roles, snapshots, consent, AI auditing and optimi
   assert.equal((await loadSession(other, simultaneous[0].session.id)).value.stage, "initial");
   await performAction(teacher, { ...privacy, retention: "更新后的测试保存安排" });
   assert.equal((await overview(other)).settings.teachingPrivacy?.version, 3);
+});
+
+test("publishing the Week 10 content revision keeps in-flight answers, chats, task snapshots and timing unchanged", async(t)=>{
+  const fake=fakeDatabase(), keys=["SUPABASE_URL","SUPABASE_SERVICE_ROLE_KEY","EDU_CLASSROOM_ENABLED","EDU_AI_PROVIDER"];
+  const saved=Object.fromEntries(keys.map(k=>[k,process.env[k]]));
+  t.after(()=>{for(const k of keys){if(saved[k]===undefined)delete process.env[k];else process.env[k]=saved[k];}delete (globalThis as any).__CT_AGENT_SUPABASE_SERVER__;});
+  process.env.SUPABASE_URL="https://test.invalid";process.env.SUPABASE_SERVICE_ROLE_KEY="test-only";process.env.EDU_CLASSROOM_ENABLED="true";process.env.EDU_AI_PROVIDER="deepseek";
+  (globalThis as any).__CT_AGENT_SUPABASE_SERVER__=fake;
+  const teacher={userId:"teacher",role:"instructor" as const}, existing={userId:"existing-week10",role:"student" as const}, newcomer={userId:"new-week10",role:"student" as const};
+  await performAction(teacher,{action:"teachingPrivacy",notice:"合成课堂说明",contact:"测试教师",retention:"仅测试",reviewed:true});
+  for(const a of [existing,newcomer]){await writeRecord(`member:${a.userId}`,{userId:a.userId},a.userId,0);await performAction(a,{action:"acknowledgeTeachingNotice",version:1,acknowledged:true});}
+  const legacyTask={...TASKS[10],prompts:{...TASKS[10].prompts,initial:"旧版初答：两种不同的问题表征是什么？",transfer:"旧版迁移：生成并比较至少两个方案。"}};
+  const publish={action:"publish",unitId:10,scheduledWeek:10,reviewed:true,published:true};
+  await performAction(teacher,{...publish,expectedVersion:0,task:legacyTask});
+  const first=(await performAction(existing,{action:"start",unitId:10,requestId:crypto.randomUUID()}) as {session:LearningSession}).session;
+  await performAction(existing,{action:"answer",sessionId:first.id,stage:"initial",text:"已提交的旧版回答",requestId:crypto.randomUUID()});
+  const record=(await readRecord<LearningSession>(`session:${first.id}`))!;
+  await writeRecord(`session:${first.id}`,{...record.value,entries:[...record.value.entries,{id:crypto.randomUUID(),kind:"chat",stage:"revision",text:"已保存问题",reply:"已保存回复",createdAt:now}]},existing.userId,record.revision);
+  const before=structuredClone(await readRecord<LearningSession>(`session:${first.id}`));
+  const settings=structuredClone(await readRecord("settings"));
+  await performAction(teacher,{...publish,expectedVersion:1,task:TASKS[10]});
+  assert.deepEqual(await readRecord(`session:${first.id}`),before,"publishing cannot rewrite source bytes, timer, answers or chats");
+  assert.deepEqual(await readRecord("settings"),settings,"content publication does not change timing or privacy settings");
+  const continued=(await performAction(existing,{action:"start",unitId:10,requestId:crypto.randomUUID()}) as {session:LearningSession}).session;
+  assert.equal(continued.id,first.id);assert.equal(continued.task.version,1);assert.deepEqual(continued.task.task,legacyTask);assert.deepEqual(continued.timing,before?.value.timing);
+  const next=(await performAction(newcomer,{action:"start",unitId:10,requestId:crypto.randomUUID()}) as {session:LearningSession}).session;
+  assert.equal(next.task.version,2);assert.deepEqual(next.task.task,TASKS[10]);assert.deepEqual(next.timing?.suggestedSeconds,DEFAULT_STAGE_SECONDS);
+  assert.equal((await overview(newcomer)).attemptLimits.find(x=>x.unitId===10)?.remainingRestarts,1);
+  const redo=(await performAction(existing,{action:"restart",sessionId:first.id,confirmed:true,requestId:crypto.randomUUID()}) as {session:LearningSession}).session;
+  assert.deepEqual(redo.task.task,legacyTask,"a redo remains comparable with its original task rather than switching questions");
 });
 
 test("one redo is append-only, cross-version, concurrent-safe, preserves drafts and keeps legacy work usable", async(t)=>{
