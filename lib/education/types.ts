@@ -18,15 +18,18 @@ export type LearningSession = {
   restartOf?: string;
   restartSnapshot?: RestartSnapshot;
   timing?: SessionTiming;
+  attemptScope?: "task-version-v1";
   // Read-model fields derived from the replacement record, never a history reset.
   supersededBy?: string;
   supersededAt?: string;
   savedRestartDraft?: RestartSnapshot;
+  archivedForTaskVersion?: number;
+  latestTaskPublished?: boolean;
 };
 export type TeachingPrivacy = { notice: string; contact: string; retention: string; version: number; reviewedAt: string; administrationAccessVersion?: number };
 export type CourseSettings = { inviteHash?: string; researchEnabled: boolean; researchProtocol: string; consentNotice: string; noticeVersion: number; updatedAt: string; teachingPrivacy?: TeachingPrivacy; timingPolicy?: { version: number; suggestedSeconds: Record<Stage, number> } };
 export type Consent = { enabled: boolean; noticeVersion: number; updatedAt: string };
 export type Stored<T> = { value: T; revision: number };
 export type ResearchConsentStatus = "authorized" | "not-consented" | "outdated" | "disabled";
-export type SessionSummary = { id: string; unitId: number; interventionId?: number; scheduledWeek: number; stage: LearningSession["stage"]; createdAt: string; updatedAt: string; hints: number; chats: number; aiErrors: number; learnerCode?: string; taskVersion: number; provider?: AISelection["provider"]; model?: string; researchConsent?: ResearchConsentStatus; attemptNumber?: number; restartOf?: string; supersededBy?: string; supersededAt?: string; timedElapsedMs?: number; timingCoverage?: "none" | "partial" | "full" };
+export type SessionSummary = { id: string; unitId: number; interventionId?: number; scheduledWeek: number; stage: LearningSession["stage"]; createdAt: string; updatedAt: string; hints: number; chats: number; aiErrors: number; learnerCode?: string; taskVersion: number; provider?: AISelection["provider"]; model?: string; researchConsent?: ResearchConsentStatus; attemptNumber?: number; restartOf?: string; supersededBy?: string; supersededAt?: string; timedElapsedMs?: number; timingCoverage?: "none" | "partial" | "full"; archivedForTaskVersion?: number; latestTaskPublished?: boolean };
 export type Analytics = { rows: SessionSummary[]; total: number; learners: number; completed: number; hints: number; chats: number; aiErrors: number; members?: number; accessScope?: "teaching" | "authorized-research" | "course-administration"; researchEnabled: boolean; protocol: string; truncated: boolean; generatedAt: string; units: {unitId: number; started: number; completed: number}[]; interventions: {id: number; title: string; ready: boolean; started: number; completed: number}[]; records?: unknown[] };

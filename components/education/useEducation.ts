@@ -9,7 +9,7 @@ export type Overview = {
   consent: Consent; aiEnabled: boolean; ai: {provider: AISelection["provider"] | null; model: string | null; configured: boolean; configurationError: boolean}; aiAvailability: Record<AISelection["provider"], boolean>; classroomEnabled: boolean; truncated: boolean;
   teachingAcknowledgement: { version: number; acknowledgedAt: string } | null;
   aiCapacity?: { concurrent: number; dailyRequests: number; usedToday: number; day: string; timezone: string };
-  attemptLimits?: {unitId: number; used: number; maxAttempts: number; remainingRestarts: number}[];
+  attemptLimits?: {unitId: number; taskVersion?: number; used: number; maxAttempts: number; remainingRestarts: number}[];
 };
 export class EducationApiError extends Error {
   constructor(message: string, public status: number, public retryAfter: number) { super(message); }

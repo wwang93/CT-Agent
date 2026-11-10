@@ -35,7 +35,7 @@ export function useStageClock(session: LearningSession | null, serverNow?: strin
   return { now, snapshot };
 }
 export default function StageTimer({ session, now }: {session: LearningSession; now: number}) {
-  if (session.stage === "complete" || session.supersededBy) return null;
+  if (session.stage === "complete" || session.supersededBy || session.archivedForTaskVersion || session.latestTaskPublished === false) return null;
   const timing=session.timing?.stages[session.stage], seconds=session.timing?.suggestedSeconds[session.stage];
   if (!timing?.startedAt || !seconds) return <div className="edu-timer"><strong>旧记录继续作答</strong><p>本阶段没有完整计时起点，不补算旧用时。提交后下一阶段开始提醒计时，不影响当前答题。</p></div>;
   const elapsed=Math.max(0,now-Date.parse(timing.startedAt)), remaining=seconds*1000-elapsed, overtime=remaining<=0;

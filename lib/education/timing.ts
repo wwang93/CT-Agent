@@ -1,5 +1,6 @@
 import { STAGES, type Stage } from "./course";
 import type { BrowserObservation, CourseSettings, LearningSession, SessionTiming, StageTiming } from "./types";
+import { attemptScopeKey } from "./task-version";
 
 export const DEFAULT_STAGE_SECONDS: Record<Stage, number> = { initial: 360, revision: 600, transfer: 480, reflection: 240 };
 export const MAX_ATTEMPTS = 2;
@@ -34,7 +35,7 @@ export function attemptViews(sessions: LearningSession[]): LearningSession[] {
   const counts = new Map<string, number>();
   const replacements = new Map(sorted.filter(s => s.restartOf).map(s => [s.restartOf!, s]));
   return sorted.map(s => {
-    const key = `${s.ownerId}:${s.unitId}`, n = (counts.get(key) ?? 0) + 1; counts.set(key,n);
+    const key = attemptScopeKey(s.ownerId,s.unitId,s.task.version), n = (counts.get(key) ?? 0) + 1; counts.set(key,n);
     const replacement = replacements.get(s.id);
     const interruptedTiming = replacement?.restartSnapshot?.stageTiming;
     return { ...s, attemptNumber: n, ...(replacement ? { supersededBy: replacement.id, supersededAt: replacement.createdAt, savedRestartDraft: replacement.restartSnapshot,

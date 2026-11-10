@@ -27,6 +27,8 @@ export function assertUnlocked(session: LearningSession, now = Date.now()) {
   if (session.pending && now - Date.parse(session.pending.startedAt) < 90_000) throw new EducationError("上一条请求仍在处理，请稍后重试。", 409);
 }
 export function assertCurrentAttempt(session: LearningSession) {
+  if (session.latestTaskPublished === false) throw new EducationError("第二次任务正在更新，请等待教师发布最新版。当前输入仍保留。", 409);
+  if (session.archivedForTaskVersion) throw new EducationError(`第二次任务已更新至 v${session.archivedForTaskVersion}，旧版回答与聊天已保留为历史，不能继续提交。请返回学习记录开始最新版；未提交文字仍在原页面，请先复制保留。`, 409);
   if (session.supersededBy) throw new EducationError("这次作答已保留为重做前记录，不能继续修改。请返回学习记录，继续新的作答；当前输入仍在页面中。", 409);
 }
 export function applyAnswer(session: LearningSession, input: { id: string; stage: unknown; text: unknown; observation?: unknown }, now: string): LearningSession {
@@ -70,7 +72,8 @@ export function sessionSummary(session: LearningSession) {
     provider: session.ai?.provider, model: session.ai?.model, stage: session.stage, createdAt: session.createdAt, updatedAt: session.updatedAt,
     hints: session.entries.filter((entry) => entry.kind === "hint").length,
     chats: session.entries.filter((entry) => entry.kind === "chat").length, aiErrors: session.entries.filter((entry) => entry.kind === "ai_error").length, taskVersion: session.task.version,
-    attemptNumber: session.attemptNumber, restartOf: session.restartOf, supersededBy: session.supersededBy, supersededAt: session.supersededAt, ...timingTotals(session) };
+    attemptNumber: session.attemptNumber, restartOf: session.restartOf, supersededBy: session.supersededBy, supersededAt: session.supersededAt,
+    archivedForTaskVersion: session.archivedForTaskVersion, latestTaskPublished: session.latestTaskPublished, ...timingTotals(session) };
 }
 export function redactText(text: string) {
   return text.replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[邮箱已遮盖]").replace(/(?<!\d)1[3-9]\d{9}(?!\d)/g, "[手机号已遮盖]");
