@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
-import { ACTIVE_UNIT_IDS, COURSE, INTERVENTIONS, STAGES, TASKS, UNITS } from "../lib/education/course";
+import { ACTIVE_UNIT_IDS, COURSE, INTERVENTIONS, STAGES, TASKS, UNITS, WEEK_11_TASK_ID, studentIntervention, type Task } from "../lib/education/course";
 import { actionId, applyAnswer, applyHint, assertOwner, assertUnlocked, redactText, sessionSummary, unitId, validateTask } from "../lib/education/engine";
 import type { LearningSession } from "../lib/education/types";
 import { analytics, loadSession, overview, performAction } from "../lib/education/service";
@@ -9,15 +9,20 @@ import { readRecord, writeRecord } from "../lib/education/store";
 import { requireAuthenticatedUser } from "../lib/auth-server";
 import { acquireAIPermit, releaseAIPermit, AICapacityError } from "../lib/education/ai-capacity";
 import { attemptViews, browserObservation, DEFAULT_STAGE_SECONDS, newTiming, timingTotals } from "../lib/education/timing";
+import { coachMessages } from "../lib/education/coach";
 
 const now = "2026-09-04T12:00:00.000Z";
+const week11Fixture: Task = { ...TASKS[6], id: WEEK_11_TASK_ID, unitId: 11, title: "合成微课样本", prompts: { initial: "找出活动与目标的差别", revision: "先备知识与可观察目标", transfer: "合成独立迁移情境", reflection: "反思设计变化" } };
 const fresh = (): LearningSession => ({id:"sample",ownerId:"student-a",unitId:6,task:{task:structuredClone(TASKS[6]),version:1,published:true,scheduledWeek:6,teacherNotes:"",reviewedAt:now,reviewedBy:"teacher"},stage:"initial",entries:[],language:"英语",createdAt:now,updatedAt:now});
-test("five interventions preserve course hours, align Week 7/10 and retain the legacy task", () => {
+test("five interventions preserve course hours, align Weeks 7, 10 and 11, and retain the legacy task", () => {
   assert.equal(UNITS.length,15); assert.equal(UNITS.reduce((sum,unit)=>sum+unit.hours,0),32);
-  assert.equal(COURSE.hours,32); assert.equal(INTERVENTIONS.length,5); assert.deepEqual(ACTIVE_UNIT_IDS,[6,10]);
-  assert.deepEqual(INTERVENTIONS.filter((item)=>item.ready).map((item)=>[item.id,item.week,item.unitId]),[[1,7,6],[2,10,10]]);
-  assert.ok(INTERVENTIONS.slice(2).every((item)=>!item.ready && !item.unitId && !item.week));
-  for(const id of ACTIVE_UNIT_IDS) assert.deepEqual(validateTask(TASKS[id],id),TASKS[id]);
+  assert.equal(COURSE.hours,32); assert.equal(INTERVENTIONS.length,5); assert.deepEqual(ACTIVE_UNIT_IDS,[6,10,11]);
+  assert.deepEqual(INTERVENTIONS.filter((item)=>item.ready).map((item)=>[item.id,item.week,item.unitId]),[[1,7,6],[2,10,10],[3,11,11]]);
+  assert.ok(INTERVENTIONS.slice(3).every((item)=>!item.ready && !item.unitId && !item.week));
+  for(const task of [TASKS[6],TASKS[10],week11Fixture]) assert.deepEqual(validateTask(task,task.unitId),task);
+  assert.equal(TASKS[11],undefined,"the draft is not in the public preview templates");
+  assert.equal(studentIntervention(INTERVENTIONS[2],false).unitId,undefined,"students only see the placeholder before publication");
+  assert.strictEqual(studentIntervention(INTERVENTIONS[2],true),INTERVENTIONS[2]);
   assert.ok(TASKS[9],"legacy source retained for existing histories");
   assert.throws(()=>unitId(9));assert.throws(()=>unitId(3));
   assert.equal(sessionSummary(fresh()).interventionId,undefined,"legacy records are not relabeled as interventions");
@@ -292,6 +297,67 @@ test("Week 10 routes every student to the latest version while preserving old an
   await assert.rejects(()=>performAction(existing,{action:"start",unitId:10,requestId:crypto.randomUUID()}),/尚未发布/);
   await assert.rejects(()=>performAction(existing,{action:"answer",sessionId:redo.id,stage:"initial",text:"草稿更新期间保留输入",requestId:crypto.randomUUID()}),/旧版|正在更新/);
   assert.deepEqual(await readRecord(`session:${redo.id}`),prePause,"paused writes cannot change any answer or timer");
+});
+
+test("Week 11 stays teacher-only until review, uses the V9 timing and redo flow, and preserves Weeks 7 and 10", async(t)=>{
+  const fake=fakeDatabase(), keys=["SUPABASE_URL","SUPABASE_SERVICE_ROLE_KEY","EDU_CLASSROOM_ENABLED","EDU_AI_PROVIDER"];
+  const saved=Object.fromEntries(keys.map(k=>[k,process.env[k]]));
+  t.after(()=>{for(const k of keys){if(saved[k]===undefined)delete process.env[k];else process.env[k]=saved[k];}delete (globalThis as any).__CT_AGENT_SUPABASE_SERVER__;});
+  process.env.SUPABASE_URL="https://test.invalid";process.env.SUPABASE_SERVICE_ROLE_KEY="test-only";process.env.EDU_CLASSROOM_ENABLED="true";process.env.EDU_AI_PROVIDER="deepseek";
+  (globalThis as any).__CT_AGENT_SUPABASE_SERVER__=fake;
+  const teacher={userId:"teacher",role:"instructor" as const}, student={userId:"week11-student",role:"student" as const};
+  await performAction(teacher,{action:"teachingPrivacy",notice:"测试说明",contact:"测试教师",retention:"仅测试",reviewed:true});
+  const suggestedSeconds={...DEFAULT_STAGE_SECONDS,initial:420};
+  await performAction(teacher,{action:"timingPolicy",suggestedSeconds});
+  await writeRecord("member:week11-student",{userId:student.userId},student.userId,0);
+  await performAction(student,{action:"acknowledgeTeachingNotice",version:1,acknowledged:true});
+  const begin=(unitId:number)=>performAction(student,{action:"start",unitId,requestId:crypto.randomUUID()}) as Promise<{session:LearningSession}>;
+  const draft={unitId:11,scheduledWeek:11,expectedVersion:0,reviewed:true,published:true,task:week11Fixture};
+  assert.equal((await overview(teacher)).configs.some(c=>c.task.unitId===11),false);
+  await assert.rejects(()=>begin(11),/尚未发布/);
+  await assert.rejects(()=>performAction(student,{...draft,action:"saveDraft"}),/权限/);
+  await performAction(teacher,{...draft,action:"saveDraft"});
+  assert.equal((await overview(teacher)).configs.find(c=>c.task.unitId===11)?.published,false);
+  assert.equal((await overview(student)).configs.some(c=>c.task.unitId===11),false);
+  assert.equal((await overview(student)).attemptLimits.some(c=>c.unitId===11),false);
+  await assert.rejects(()=>begin(11),/尚未发布/);
+  await assert.rejects(()=>performAction(teacher,{...draft,action:"publish",expectedVersion:1,reviewed:false}),/先审核/);
+
+  for (const {unitId,scheduledWeek} of [{unitId:6,scheduledWeek:7},{unitId:10,scheduledWeek:10}]) {
+    await performAction(teacher,{action:"publish",unitId,scheduledWeek,expectedVersion:0,reviewed:true,published:true,task:TASKS[unitId]});
+    await begin(unitId);
+  }
+  const unaffected=()=>fake.tables.course_templates.filter(row=>row.assignment_id!=="edu:config:11" && !(row.assignment_id.startsWith("edu:session:") && row.scaffolds[0].unitId===11));
+  const before=structuredClone(unaffected());
+  await performAction(teacher,{...draft,action:"publish",expectedVersion:1});
+  assert.equal((await overview(student)).attemptLimits.find(c=>c.unitId===11)?.remainingRestarts,1);
+  const first=(await begin(11)).session;
+  assert.equal(first.interventionId,3);assert.equal(first.task.scheduledWeek,11);assert.equal(first.stage,"initial");
+  assert.equal(first.attemptScope,"task-version-v1");assert.deepEqual(first.timing?.suggestedSeconds,suggestedSeconds);
+  assert.deepEqual((await begin(11)).session.timing,first.timing,"resuming does not restart the clock");
+  const step=(action:string,extra:Record<string,unknown>={})=>performAction(student,{action,sessionId:first.id,text:"合成回答",requestId:crypto.randomUUID(),...extra});
+  await assert.rejects(()=>step("chat"),/仅在解释与修订阶段/);
+  const revised=(await step("answer",{stage:"initial"}) as {session:LearningSession}).session;
+  const context=JSON.stringify(coachMessages(revised,"我的证据是否对准目标？"));
+  assert.ok(context.includes("先备知识"));assert.ok(!context.includes(week11Fixture.prompts.transfer),"the independent case is not sent to the coach");
+  for(let i=0;i<3;i++)await step("hint");
+  await assert.rejects(()=>step("hint"),/三个层级/);
+  await step("answer",{stage:"revision"});
+  await assert.rejects(()=>step("hint"),/仅在解释与修订阶段/);
+  await assert.rejects(()=>step("chat"),/仅在解释与修订阶段/);
+  await step("answer",{stage:"transfer"});
+  const finished=(await step("answer",{stage:"reflection"}) as {session:LearningSession}).session;
+  assert.equal(finished.stage,"complete");assert.equal(timingTotals(finished).timingCoverage,"full");
+  const original=await readRecord("session:"+first.id);
+  const redo=(await step("restart",{confirmed:true,answerDraft:"重做前草稿"}) as {session:LearningSession}).session;
+  assert.equal(redo.attemptNumber,2);assert.equal(redo.stage,"initial");assert.equal(redo.restartSnapshot?.answerDraft,"重做前草稿");
+  await assert.rejects(()=>step("restart",{sessionId:redo.id,confirmed:true}),/重做机会已使用/);
+  assert.deepEqual(await readRecord("session:"+first.id),original);
+  await performAction(teacher,{...draft,action:"publish",expectedVersion:2});
+  const updated=(await begin(11)).session;
+  assert.equal(updated.task.version,3);assert.equal(updated.attemptNumber,1);
+  assert.equal((await loadSession(student,redo.id)).value.archivedForTaskVersion,3);
+  assert.deepEqual(unaffected(),before,"Week 11 review, publication, attempts and re-publication do not change other tasks or settings");
 });
 
 test("activity 1 retains its cross-version redo quota, draft preservation and legacy continuation", async(t)=>{

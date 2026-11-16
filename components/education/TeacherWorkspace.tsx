@@ -13,6 +13,7 @@ import { ADMINISTRATION_ACCESS_VERSION } from "@/lib/education/privacy";
 import TimingPolicyEditor from "./TimingPolicyEditor";
 import TimingReport from "./TimingReport";
 import { durationLabel } from "@/lib/education/timing";
+import { usesLatestTask } from "@/lib/education/task-version";
 
 export default function TeacherWorkspace() {
   const { data, loading, error: accessError, refresh } = useEducation();
@@ -21,33 +22,46 @@ export default function TeacherWorkspace() {
   const [research, setResearch] = useState(false), [protocol, setProtocol] = useState(""), [notice, setNotice] = useState(""), [approved, setApproved] = useState(false);
   const [busy, setBusy] = useState(false), [message, setMessage] = useState(""), [error, setError] = useState(""), [invite, setInvite] = useState("");
   const feedbackId = useRef<string | null>(null);
+  const loadedEditor = useRef<string | null>(null);
   const [view, setView] = useState<"overview" | "tasks" | "students" | "records" | "settings">("overview");
   const [showOldVersions, setShowOldVersions] = useState(false);
   const currentRows = stats?.rows.filter(row => !row.archivedForTaskVersion) ?? [];
   const visibleRows = showOldVersions ? stats?.rows ?? [] : currentRows;
   const archivedCount = (stats?.rows.length ?? 0) - currentRows.length;
   const current = data?.configs.find((item) => item.task.unitId === unit);
-  useEffect(() => { setDraft(taskForDisplay(structuredClone(current?.task ?? TASKS[unit]))); setWeek(current?.scheduledWeek ?? getInterventionForUnit(unit)!.week!); setNotes(current?.teacherNotes ?? ""); setReviewed(false); }, [current?.version, unit]);
+  const template: Task | undefined = TASKS[unit];
+  const publishedCount = data?.configs.filter((item) => ACTIVE_UNIT_IDS.includes(item.task.unitId) && item.published && item.reviewedAt).length ?? 0;
+  useEffect(() => {
+    const task = current?.task ?? template, editorKey = `${unit}:${current?.version ?? 0}`;
+    if (!task || loadedEditor.current === editorKey) return;
+    loadedEditor.current = editorKey;
+    setDraft(taskForDisplay(structuredClone(task)));
+    setWeek(current?.scheduledWeek ?? getInterventionForUnit(unit)!.week!);
+    setNotes(current?.teacherNotes ?? "");
+    setReviewed(false);
+  }, [current, template, unit]);
   useEffect(() => { if (data?.user.role === "instructor") { setResearch(data.settings.researchEnabled); setProtocol(data.settings.researchProtocol); setNotice(data.settings.consentNotice); void educationApi<Analytics>("?view=teaching").then(setStats).catch((err) => setError(err.message)); } }, [data]);
   async function run(work: () => Promise<void>) { setBusy(true); setError(""); setMessage(""); try { await work(); } catch (err) { setError((err as Error).message); } finally { setBusy(false); } }
   const change = (key: keyof Task, value: unknown) => { setDraft((old) => ({...old,[key]:value})); setReviewed(false); };
   return <div className="edu-app"><CourseHeader active="instructor" />{!data || data.user.role !== "instructor" ? <AccessNotice loading={loading} error={accessError} mismatch={data ? "教师权限由管理员配置，学生注册不能自行取得。" : ""} onRetry={refresh} /> : <main className="edu-page">
     <div className="edu-page-heading"><div><div className="edu-eyebrow">教育心理学 · 教学管理</div><h1>课程工作台</h1><p>安排学习任务，管理学生账号，回看课堂中的理解变化。</p></div><Link className="edu-button secondary" href="/preview">查看学生流程 →</Link></div>
     <div className="edu-workspace-nav" role="group" aria-label="教学管理栏目">{([["overview","课程概览"],["tasks","任务审核"],["students","学生名单"],["records","学习记录"],["settings","课程设置"]] as const).map(([id,label]) => <button key={id} className={view === id ? "active" : ""} aria-pressed={view === id} onClick={() => setView(id)}>{label}</button>)}</div><div hidden={view !== "overview"}>
-    {!data.classroomEnabled && <div className="edu-callout">课堂尚未开启，等待你最终审核。请完成课程设置中的教学记录说明，分别审核发布前两次任务，再确认学生名单已发放。后三次保持待提供讲义；管理员收到你的开课确认后才启用正式记录。</div>}
-    <section className="edu-panel"><h2>开课检查</h2><p>前两次任务已发布 {data.configs.filter((item) => ACTIVE_UNIT_IDS.includes(item.task.unitId) && item.published && item.reviewedAt).length}/2；教学记录说明{data.settings.teachingPrivacy?.administrationAccessVersion === ADMINISTRATION_ACCESS_VERSION ? `已确认 v${data.settings.teachingPrivacy.version}` : "待你确认"}；研究{data.settings.researchEnabled ? "已启用自愿选择" : "授权研究资料关闭；全班管理查看独立保留"}。</p><p>保存草稿不代表已经审核。请完成每次任务的审核与发布；课堂开关和学生访问是不同设置。</p></section>
-    <section className="edu-panel"><div className="edu-panel-title"><h2>学习活动安排</h2><span className="edu-status">{data.configs.filter(item => ACTIVE_UNIT_IDS.includes(item.task.unitId) && item.published && item.reviewedAt).length === 2 ? "前两次已发布" : "前两次待审核"}</span></div><div className="edu-activity-grid">{INTERVENTIONS.map(item => <div key={item.id}><span className="edu-caption">活动 {String(item.id).padStart(2,"0")}</span><h3>{item.title}</h3><p className="edu-caption">{item.ready ? `第 ${item.week} 周 · 已准备讲义` : "待教师提供讲义"}</p></div>)}</div></section>
+    {!data.classroomEnabled && <div className="edu-callout">课堂尚未开启。请确认教学记录说明和学生名单，并审核要开放的任务。管理员收到你的开课确认后才启用正式记录。</div>}
+    <section className="edu-panel"><h2>开课检查</h2><p>已准备任务 {ACTIVE_UNIT_IDS.length} 项，已发布 {publishedCount} 项；教学记录说明{data.settings.teachingPrivacy?.administrationAccessVersion === ADMINISTRATION_ACCESS_VERSION ? `已确认 v${data.settings.teachingPrivacy.version}` : "待你确认"}；研究{data.settings.researchEnabled ? "已启用自愿选择" : "授权研究资料关闭；全班管理查看独立保留"}。</p><p>保存草稿不代表已经审核。课堂开启后，学生只能开始已发布的任务。</p></section>
+    <section className="edu-panel"><div className="edu-panel-title"><h2>学习活动安排</h2><span className="edu-status">已发布 {publishedCount}/{ACTIVE_UNIT_IDS.length}</span></div><div className="edu-activity-grid">{INTERVENTIONS.map(item => { const config = data.configs.find(task => task.task.unitId === item.unitId); return <div key={item.id}><span className="edu-caption">活动 {String(item.id).padStart(2,"0")}</span><h3>{item.title}</h3><p className="edu-caption">{item.ready ? `第 ${config?.scheduledWeek ?? item.week} 周 · ${config?.published ? "已发布" : "待审核发布"}` : "待教师提供讲义"}</p></div>; })}</div></section>
     <section className="edu-metrics">{[["已加入课程",stats?.members],["当前任务记录",stats?currentRows.length:undefined],["完成四阶段",stats?currentRows.filter(row=>row.stage==="complete").length:undefined],["学习答疑轮次",stats?currentRows.reduce((sum,row)=>sum+row.chats,0):undefined]].map(([label,value]) => <div key={label}><span>{label}</span><strong>{value ?? "—"}</strong></div>)}</section>
-    <div className="edu-quick-links"><button onClick={() => setView("tasks")}><strong>审核前两次任务 →</strong><span>检查案例、提示与完成标准</span></button><button onClick={() => setView("students")}><strong>查看学生名单 →</strong><span>管理固定 ID 与访问码</span></button><button onClick={() => setView("settings")}><strong>完成开课设置 →</strong><span>确认教学记录说明与联系渠道</span></button></div></div>
+    <div className="edu-quick-links"><button onClick={() => setView("tasks")}><strong>审核学习任务 →</strong><span>检查案例、提示与完成标准</span></button><button onClick={() => setView("students")}><strong>查看学生名单 →</strong><span>管理固定 ID 与访问码</span></button><button onClick={() => setView("settings")}><strong>完成开课设置 →</strong><span>确认教学记录说明与联系渠道</span></button></div></div>
     <div hidden={view !== "students"}><LearningIdManager /></div>
     <div hidden={view !== "settings"}>
     <TimingPolicyEditor current={data.settings.timingPolicy} onSaved={refresh}/>
     <TeachingPrivacyEditor current={data.settings.teachingPrivacy} onSaved={refresh} />
     <section className="edu-panel"><div className="edu-panel-title"><h2>已有邮箱学生的入课方式</h2><button className="edu-button secondary" disabled={busy} onClick={() => run(async () => { const result = await educationApi<{code:string}>("",{action:"invite"}); setInvite(result.code); setMessage("邀请码已生成。更新后旧码失效，已经加入的学生不受影响。"); await refresh(); })}>{data.settings.inviteEnabled ? "更新课程邀请码" : "生成课程邀请码"}</button></div><p>仅已有邮箱学生需要邀请码。教师发放的学习 ID 已登记课程成员，不需要再次入课。研究参与另行选择，不能作为加入条件。</p>{invite && <p className="edu-invite">本次邀请码：<strong>{invite}</strong><small>只在本次操作后显示，请通过课程渠道发放。</small></p>}</section>
-    </div><div hidden={view !== "tasks"}><section className="edu-panel"><div className="edu-panel-title"><h2>学习任务与分层提示</h2><span className="edu-caption">活动 1 / 第 7 周 · 活动 2 / 第 10 周 · 后三次待选讲义</span></div><div className="edu-tabs" role="group" aria-label="选择编辑单元">{ACTIVE_UNIT_IDS.map((id) => <button key={id} className={unit === id ? "active" : ""} onClick={() => setUnit(id)} disabled={busy}>活动 {getInterventionForUnit(id)!.id} · {UNITS[id-1].title}</button>)}</div>
-      <p className="edu-caption">当前：{current ? `v${current.version} · ${current.published ? "已发布" : "草稿"}` : "未发布样板"}。{unit===10?"第二次活动发布新版后，全班统一使用最新版，旧题只读保留，不占新版次数；保存草稿期间暂停本活动作答。":"第一活动继续保留学生原任务版本与累计次数。"}所有新版本都不会覆盖旧回答、聊天和计时。修改前请保存当前任务。</p>
-      <button className="edu-button secondary" disabled={busy} onClick={() => {setDraft(structuredClone(TASKS[unit]));setWeek(getInterventionForUnit(unit)!.week!);setReviewed(false);}}>载入本次讲义样板（替换编辑区，尚不发布）</button>
-      <div className="edu-form-grid"><label>教学周<input type="number" min={1} max={30} value={week} onChange={(e) => setWeek(Number(e.target.value))} /></label><label>任务标题<input value={draft.title} maxLength={100} onChange={(e) => change("title",e.target.value)} /></label></div>
+    </div><div hidden={view !== "tasks"}><section className="edu-panel"><div className="edu-panel-title"><h2>学习任务与分层提示</h2><span className="edu-caption">第 7、10、11 周 · 第四、五次待选讲义</span></div><div className="edu-tabs" role="group" aria-label="选择编辑单元">{ACTIVE_UNIT_IDS.map((id) => <button key={id} className={unit === id ? "active" : ""} onClick={() => { setReviewed(false); setUnit(id); }} disabled={busy}>活动 {getInterventionForUnit(id)!.id} · {UNITS[id-1].title}</button>)}</div>
+      <p className="edu-caption">当前：{current ? `v${current.version} · ${current.published ? "已发布" : "草稿"}` : "未发布样板"}。{usesLatestTask(unit)?"本活动发布后，全班统一使用该活动的最新版，旧题只读保留，不占新版次数；保存草稿期间暂停本活动作答。":"第一活动继续保留学生原任务版本与累计次数。"}新版本不会覆盖旧回答、聊天和计时。</p>
+      {template && <button className="edu-button secondary" disabled={busy} onClick={() => {setDraft(structuredClone(template));setWeek(getInterventionForUnit(unit)!.week!);setReviewed(false);}}>载入本次讲义样板（替换编辑区，尚不发布）</button>}
+      {!template && !current && <p className="edu-caption">本活动的讲义草稿尚未载入。</p>}
+      {draft.unitId === unit && <>
+      <div className="edu-form-grid"><label>教学周<input type="number" min={1} max={30} value={week} onChange={(e) => {setWeek(Number(e.target.value));setReviewed(false);}} /></label><label>任务标题<input value={draft.title} maxLength={100} onChange={(e) => change("title",e.target.value)} /></label></div>
       <label>学习目标<textarea rows={2} value={draft.objective} onChange={(e) => change("objective",e.target.value)} /></label>
       <label>案例情境<textarea rows={4} value={draft.caseText} onChange={(e) => change("caseText",e.target.value)} /></label>
       <details className="edu-editor-details" open><summary>四阶段任务问题</summary>{STAGES.map((stage) => <label key={stage.id}>{stage.title}<textarea rows={3} value={draft.prompts[stage.id]} onChange={(e) => change("prompts",{...draft.prompts,[stage.id]:e.target.value})} /></label>)}</details>
@@ -56,7 +70,8 @@ export default function TeacherWorkspace() {
       <label>课程材料与来源说明<textarea rows={2} value={draft.source} onChange={(e) => change("source",e.target.value)} /></label>
       <label>教师补充（学生可见，并用于学习答疑）<textarea rows={2} maxLength={2000} value={notes} onChange={(e) => {setNotes(e.target.value);setReviewed(false);}} /></label>
       <label className="edu-check"><input type="checkbox" checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} />我已审核本任务的事实、来源、提示层次与完成标准。</label>
-      <div className="edu-actions">{[false,true].map((published) => <button key={String(published)} className={`edu-button ${published ? "" : "secondary"}`} disabled={busy || (published && !reviewed)} onClick={() => run(async () => { await educationApi("",{action:published ? "publish" : "saveDraft",unitId:unit,expectedVersion:current?.version ?? 0,task:draft,scheduledWeek:week,teacherNotes:notes,reviewed,published}); await refresh(); setMessage(published ? "任务新版本已发布。" : "已保存为未审核草稿，学生不能开始此版本。"); })}>{published ? "发布新版本" : "保存为草稿 / 停止新开任务"}</button>)}</div>
+      <div className="edu-actions">{[false,true].map((published) => <button key={String(published)} className={`edu-button ${published ? "" : "secondary"}`} disabled={busy || draft.unitId !== unit || (published && !reviewed)} onClick={() => run(async () => { await educationApi("",{action:published ? "publish" : "saveDraft",unitId:unit,expectedVersion:current?.version ?? 0,task:draft,scheduledWeek:week,teacherNotes:notes,reviewed,published}); await refresh(); setMessage(published ? "任务新版本已发布。" : "已保存为未审核草稿，学生不能开始此版本。"); })}>{published ? "发布新版本" : "保存为草稿 / 停止新开任务"}</button>)}</div>
+      </>}
     </section>
     </div><div hidden={view !== "records"}><section className="edu-panel"><div className="edu-panel-title"><h2>学习记录与教师反馈</h2><button className="edu-button secondary" disabled={busy} onClick={() => run(async () => setStats(await educationApi<Analytics>("?view=teaching")))}>刷新记录</button></div><p className="edu-caption">默认查看当前任务。第二次活动的旧版本历史不混入当前任务统计；请按记录对应的题目和完成标准评价，不混用版本。次数和经过时间不代表理解水平。</p><label className="edu-check"><input type="checkbox" checked={showOldVersions} onChange={e=>setShowOldVersions(e.target.checked)}/>同时显示旧版本历史（{archivedCount} 条，不计入当前任务统计）</label>{stats?.truncated && <p role="alert">记录超过本版读取上限，当前统计不完整。</p>}
       {!visibleRows.length ? <p className="edu-empty">暂无当前筛选范围的学习记录。</p> : <div className="edu-table-wrap"><table><thead><tr><th>学习编号</th><th>活动 / 教学周 / 单元 / 版本</th><th>阶段 / 次数 / 用时</th><th>提示 / 对话</th><th>记录</th></tr></thead><tbody>{visibleRows.map((row) => <tr key={row.id}><td>{row.learnerCode}</td><td>{row.interventionId ? `活动 ${row.interventionId}` : "旧版"} / 第 {row.scheduledWeek} / {row.unitId} / v{row.taskVersion}{row.archivedForTaskVersion&&<><br/><small>旧版历史 · 当前 v{row.archivedForTaskVersion}</small></>}</td><td>{row.supersededBy&&row.stage!=="complete"?"中途结束":row.stage === "complete" ? "完成" : STAGES.find((s) => s.id === row.stage)?.short}<br/><small>第 {row.attemptNumber??1} 次{row.restartOf?"（重做）":""} · {durationLabel(row.timedElapsedMs)}{row.timingCoverage==="partial"?"（部分阶段）":""}</small></td><td>{row.hints} / {row.chats}</td><td><button className="edu-text-link" disabled={busy} onClick={() => run(async () => {setSession((await educationApi<{session:LearningSession}>(`?session=${row.id}`)).session);setFeedback("");feedbackId.current=null;})}>查看轨迹</button></td></tr>)}</tbody></table></div>}

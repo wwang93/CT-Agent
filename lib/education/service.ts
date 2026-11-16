@@ -43,10 +43,11 @@ export async function overview(auth: Auth) {
   ]);
   const { inviteHash, ...publicSettings } = settings;
   const learningId = await verifiedLearningId(auth.userId);
+  const visibleConfigs = configs.records.filter((item) => auth.role === "instructor" || (item.published && ACTIVE_UNIT_IDS.includes(item.task.unitId)));
   return { user: { id: auth.userId, role: auth.role, learnerCode: learningId ?? learnerCode(auth.userId), canReadAllCourseRecords: await canReadAllCourseRecords(auth) }, member: auth.role !== "student" || Boolean(member),
-    configs: configs.records.filter((item) => auth.role === "instructor" || (item.published && ACTIVE_UNIT_IDS.includes(item.task.unitId))),
+    configs: visibleConfigs,
     sessions: attemptViews(sessions.records).map(s => taskVersionView(s,configs.records.find(c => c.task.unitId === s.unitId))).map(sessionSummary).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
-    attemptLimits: ACTIVE_UNIT_IDS.map(unitId => {
+    attemptLimits: ACTIVE_UNIT_IDS.filter(unitId => unitId !== 11 || auth.role === "instructor" || visibleConfigs.some(c => c.task.unitId === unitId && c.interventionId === 3)).map(unitId => {
       const taskVersion = configs.records.find(c => c.task.unitId === unitId)?.version;
       const used = sessions.records.filter(s => isInTaskScope(s,unitId,taskVersion)).length;
       return { unitId, taskVersion, used, maxAttempts: MAX_ATTEMPTS, remainingRestarts: Math.max(0, MAX_ATTEMPTS - Math.max(1,used)) };

@@ -14,6 +14,8 @@ dist/
 !.env.example
 .DS_Store
 teacher-access.local.txt
+# Unpublished course material is loaded as an authenticated database draft, never published to GitHub.
+/lib/education/week11-draft.ts
 staff-access.local.txt
 staff-access.local.json
 outputs/education-roster-20261010/

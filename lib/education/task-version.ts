@@ -1,8 +1,8 @@
 import type { LearningSession, PublishedTask } from "./types";
 
-// Only activity 2 adopts a uniform latest-version task. Activity 1 keeps its
+// Activities 2 and 3 adopt a uniform latest-version task. Activity 1 keeps its
 // original continuation/quota semantics; no stored histories are migrated.
-export function usesLatestTask(unitId: number) { return unitId === 10; }
+export function usesLatestTask(unitId: number) { return unitId === 10 || unitId === 11; }
 export function attemptScopeKey(ownerId: string, unitId: number, taskVersion: number) {
   return `${ownerId}:${unitId}${usesLatestTask(unitId) ? `:v${taskVersion}` : ""}`;
 }

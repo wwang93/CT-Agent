@@ -1,4 +1,4 @@
-import { ACTIVE_UNIT_IDS, STAGES, TASKS, type Stage, type Task } from "./course";
+import { ACTIVE_UNIT_IDS, STAGES, TASKS, WEEK_11_TASK_ID, type Stage, type Task } from "./course";
 import type { Entry, LearningSession } from "./types";
 import { finishStage, timingTotals } from "./timing";
 
@@ -14,7 +14,7 @@ export function actionId(value: unknown): string {
   return value;
 }
 export function unitId(value: unknown): number {
-  if (typeof value !== "number" || !Number.isInteger(value) || !ACTIVE_UNIT_IDS.includes(value)) throw new EducationError("本版仅开放干预 1（单元 6）与干预 2（单元 10）；后面三次待教师选定讲义。");
+  if (typeof value !== "number" || !Number.isInteger(value) || !ACTIVE_UNIT_IDS.includes(value)) throw new EducationError("该单元还没有可审核的学习任务。");
   return value;
 }
 export function nextStage(stage: Stage): LearningSession["stage"] {
@@ -27,8 +27,8 @@ export function assertUnlocked(session: LearningSession, now = Date.now()) {
   if (session.pending && now - Date.parse(session.pending.startedAt) < 90_000) throw new EducationError("上一条请求仍在处理，请稍后重试。", 409);
 }
 export function assertCurrentAttempt(session: LearningSession) {
-  if (session.latestTaskPublished === false) throw new EducationError("第二次任务正在更新，请等待教师发布最新版。当前输入仍保留。", 409);
-  if (session.archivedForTaskVersion) throw new EducationError(`第二次任务已更新至 v${session.archivedForTaskVersion}，旧版回答与聊天已保留为历史，不能继续提交。请返回学习记录开始最新版；未提交文字仍在原页面，请先复制保留。`, 409);
+  if (session.latestTaskPublished === false) throw new EducationError("这次任务正在更新，请等待教师发布最新版。当前输入仍保留。", 409);
+  if (session.archivedForTaskVersion) throw new EducationError(`这次任务已更新至 v${session.archivedForTaskVersion}，旧版回答与聊天已保留为历史，不能继续提交。请返回学习记录开始最新版；未提交文字仍在原页面，请先复制保留。`, 409);
   if (session.supersededBy) throw new EducationError("这次作答已保留为重做前记录，不能继续修改。请返回学习记录，继续新的作答；当前输入仍在页面中。", 409);
 }
 export function applyAnswer(session: LearningSession, input: { id: string; stage: unknown; text: unknown; observation?: unknown }, now: string): LearningSession {
@@ -50,6 +50,8 @@ export function applyHint(session: LearningSession, id: string, now: string): Le
   return { ...session, pending: undefined, entries: [...session.entries, { id, kind: "hint", stage: "revision", text: session.task.task.hints[level], level: level + 1, createdAt: now }], updatedAt: now };
 }
 export function validateTask(raw: unknown, expectedUnit: number): Task {
+  const id = expectedUnit === 11 ? WEEK_11_TASK_ID : TASKS[expectedUnit]?.id;
+  if (!id) throw new EducationError("没有找到本单元任务样板。");
   if (!raw || typeof raw !== "object") throw new EducationError("任务格式不完整。");
   const item = raw as Task;
   const list = (value: unknown, label: string, min: number, max: number) => {
@@ -59,7 +61,7 @@ export function validateTask(raw: unknown, expectedUnit: number): Task {
   if (!item.prompts || typeof item.prompts !== "object") throw new EducationError("缺少学习阶段问题。");
   if (!Array.isArray(item.concepts) || item.concepts.length < 1 || item.concepts.length > 8) throw new EducationError("概念卡数量无效。");
   return {
-    unitId: expectedUnit, id: TASKS[expectedUnit].id,
+    unitId: expectedUnit, id,
     title: requiredText(item.title, "任务标题", 150), caseText: requiredText(item.caseText, "案例", 3000), objective: requiredText(item.objective, "学习目标", 1000),
     prompts: Object.fromEntries(STAGES.map((stage) => [stage.id, requiredText(item.prompts[stage.id], stage.title, 2000)])) as Task["prompts"],
     hints: list(item.hints, "分层提示", 3, 3) as Task["hints"],

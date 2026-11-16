@@ -23,7 +23,7 @@ export const UNITS: Unit[] = [
   { id: 8, title: "动机、目标、信念与情绪", hours: 3, group: 2, concepts: ["自我决定", "归因", "自我效能", "焦虑"], objective: "用不同动机理论解释外语学习经历，提出支持自主与胜任感的方案。", question: "不愿开口，是不想学，还是有别的解释？" },
   { id: 9, title: "自我调节学习与学习策略", hours: 3, group: 2, concepts: ["计划", "监控", "控制", "评价"], objective: "制定可观察、可调整的一周语言学习计划，并设计检查依据。", question: "写了计划，怎样知道自己真的在学习？" },
   { id: 10, title: "问题解决、批判思考、创造性与迁移", hours: 2, group: 2, concepts: ["问题表征", "证据评价", "发散与聚合", "迁移"], objective: "重新表征沟通问题，评价证据、比较方案，并在新情境中独立应用原则。", question: "最初的判断可靠吗？还有哪些解决方案？", ready: true },
-  { id: 11, title: "有效教学与教学设计", hours: 2, group: 3, concepts: ["教学目标", "活动与评价一致性"], objective: "设计目标、活动和学习证据相互一致的语言微型教学。", question: "怎样判断一个热闹的活动是否实现了学习目标？" },
+  { id: 11, title: "有效教学与教学设计", hours: 2, group: 3, concepts: ["可观察的学习目标", "目标—证据—活动一致性", "形成性反馈"], objective: "设计目标、活动和学习证据相互一致的语言微型教学。", question: "怎样判断一个热闹的活动是否实现了学习目标？", ready: true },
   { id: 12, title: "学生中心、合作、差异化与技术辅助教学", hours: 2, group: 3, concepts: ["合作学习", "差异化", "数字素养"], objective: "为不同语言水平设计合作角色，并按学习目标选择技术工具。", question: "技术和合作，什么时候真正提供了学习支持？" },
   { id: 13, title: "学习环境与课堂管理", hours: 2, group: 3, concepts: ["规则与常规", "积极关系", "自我管理"], objective: "理解课堂规则、预防与沟通如何服务学习与自我管理。", question: "好的课堂规则，应该帮助学生做到什么？" },
   { id: 14, title: "促进学习与评定学习的评价", hours: 2, group: 3, concepts: ["形成性评价", "信度与效度", "量规"], objective: "为语言任务制定简短量规，检查评价的一致性与潜在偏差。", question: "一个分数，能告诉我们学生理解了什么吗？" },
@@ -33,12 +33,18 @@ export type Intervention = { id: number; title: string; unitId?: number; week?: 
 export const INTERVENTIONS: Intervention[] = [
   { id: 1, title: "从即时表现到可用知识", unitId: 6, week: 7, focus: "注意 · 认知负荷 · 意义编码 · 提取练习", ready: true },
   { id: 2, title: "从初始判断到有依据的方案", unitId: 10, week: 10, focus: "问题表征 · 批判思考 · 创造性 · 迁移", ready: true },
-  { id: 3, title: "第三次学习活动", focus: "待选定讲义后确定任务与教学周", ready: false },
+  { id: 3, title: "从课堂活动到学习证据", unitId: 11, week: 11, focus: "可观察的目标 · 学习证据 · 教学活动与调整", ready: true },
   { id: 4, title: "第四次学习活动", focus: "待选定讲义后确定任务与教学周", ready: false },
   { id: 5, title: "第五次学习活动", focus: "待选定讲义后确定任务与教学周", ready: false },
 ];
 export const ACTIVE_UNIT_IDS = INTERVENTIONS.filter((item) => item.ready && item.unitId !== undefined).map((item) => item.unitId!);
+export const WEEK_11_TASK_ID = "instructional-design-alignment";
 export function getInterventionForUnit(id: number) { return INTERVENTIONS.find((item) => item.unitId === id); }
+export function studentIntervention(item: Intervention, published: boolean): Intervention {
+  return item.id === 3 && !published
+    ? { id: 3, title: "第三次学习活动", focus: "等待教师发布任务", ready: false }
+    : item;
+}
 export type Task = {
   unitId: number; id: string; title: string; caseText: string; objective: string;
   prompts: Record<Stage, string>; hints: [string, string, string];
